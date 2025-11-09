@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+UI components and styling for the AskAlfred Streamlit app.
+Enhanced with building cache status display.
+"""
+
+import streamlit as st
+from config import TARGET_INDEXES, SEARCH_ALL_NAMESPACES, DEFAULT_NAMESPACE, MIN_SCORE_THRESHOLD
+from building_utils import get_building_names_from_cache, get_cache_status
+
+
+def setup_page_config():
+    """Set up Streamlit page configuration."""
+    st.set_page_config(
+        page_title="University of Bristol | Streamlit App",
+        page_icon="https://www.bristol.ac.uk/assets/responsive-web-project/2.6.9/images/logos/uob-logo.svg",
+        layout="wide",
+    )
+
+
+def render_custom_css():
+    """Render custom CSS styles."""
+    st.markdown(
+        """
+        <style>
+          .uob-header {
+            position: relative;
+            background: rgba(227, 230, 229, 0.7);
+            padding: 1.25rem 1.5rem;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 20px;
+          }
+          @media (prefers-color-scheme: light) {
+            .uob-header { background: rgba(171, 31, 45, 0.4); border: 1px solid rgba(0, 0, 0, 0.1); }
+          }
+          @media (prefers-color-scheme: dark) {
+            .uob-header h1 { color: #000 !important; }
+          }
+          .uob-header img { height: 70px; z-index: 2;}
+          .uob-header h1 {
+            position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+            margin: 0; font-size: 2rem;
+          }
+          .publication-date {
+            background-color: rgba(255, 193, 7, 0.1);
+            border-left: 4px solid #ffc107;
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-size: 0.9em;
+          }
+          .top-result-highlight {
+            background-color: rgba(40, 167, 69, 0.1);
+            border-left: 4px solid #28a745;
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-size: 0.9em;
+          }
+          .low-score-warning {
+            background-color: rgba(220, 53, 69, 0.1);
+            border-left: 4px solid #dc3545;
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-size: 0.9em;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_header():
+    """Render the application header."""
+    st.markdown(
+        """
+        <div class="uob-header">
+          <picture>
+            <source srcset="https://www.bristol.ac.uk/assets/responsive-web-project/2.6.9/images/logos/uob-logo.svg" media="(prefers-color-scheme: light)"/>
+            <source srcset="https://www.bristol.ac.uk/assets/responsive-web-project/2.6.9/images/logos/uob-logo.svg"/>
+            <img src="https://www.bristol.ac.uk/assets/responsive-web-project/2.6.9/images/logos/uob-logo.svg" alt="University of Bristol"/>
+          </picture>
+          <h1>🦍 AskAlfred</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_tabs():
+    """Render main content tabs."""
+    tab1, tab2, tab3 = st.tabs(["Welcome", "Info", "Resources"])
+
+    with tab1:
+        st.write(
+            """
+            #### Hi, I'm Alfred! 👋  
+            You can ask me questions about the following topics: 
+            - 🏢 Building Management Systems (BMS)  
+            - 🔥 Fire Risk Assessments (FRAs) and
+            - 🛠️ Maintenance requests and jobs across our estate.
+
+            Type your question in the chat below, and I'll search across our knowledge bases to find answers.
+            
+            **💡 Tip:** You can use building names or their abbreviations (e.g., "BDFI" for "65 Avon Street")
+            """
+        )
+
+    with tab2:
+        st.write(
+            """
+            #### ⚠️ Disclaimer
+            This app is experimental and should not be used for decision-making.
+            The chatbot is configured to say **"Regan has told me to say I don't know."** if the answer isn't in the knowledge base or relevance is too low (below the minimum score threshold of 0.3).
+            
+            #### 🏢 Building Name Recognition
+            Alfred can recognise building names and their common abbreviations. The system uses a dynamic cache loaded from the property database, which includes:
+            - Official building names (e.g., "Senate House", "1-9 Old Park Hill")
+            - Alternative names and abbreviations (e.g., "BDFI" for "65 Avon Street", "SHB" for "Senate House Building")
+            - Common variations and aliases
+            
+            When you mention a building in your query, Alfred will automatically:
+            - Detect the building name or abbreviation
+            - Search specifically for documents related to that building
+            - Prioritise results from the correct building
+            - Show you the building it detected in the results
+            """
+        )
+        # Footer with accessibility statement
+        st.markdown("""
+        ---
+        <footer role="contentinfo" style="margin-top: 2rem; padding: 1rem; background-color: rgba(0,0,0,0.05); border-radius: 8px;">
+            <small>
+            <strong>Accessibility:</strong> This application follows WCAG 2.2 AA guidelines. 
+            If you encounter any accessibility issues, please contact the <strong>Smart Technology Data Team</strong>.<br>
+            <strong>University of Bristol</strong> | Experimental Research Application
+            </small>
+        </footer>
+        """, unsafe_allow_html=True)
+
+    with tab3:
+        st.markdown("#### 💡 Example queries")
+        col1, col2 = st.columns([2, 3])
+        with col1:
+            st.markdown(
+                """
+                **FRA topics:**
+                - How many staff or visitors can Senate House accommodate?
+                - How many floors does Augustines Courtyard have?
+                - List the fire risks at Old Park Hill
+                
+                **Building abbreviations:**
+                - Does DHB have an fra?
+                - Tell me about SHB
+
+                """
+            )
+        with col2:
+            st.markdown(
+                """
+                **BMS topics:**
+                - How does the frost protection sequence operate in the Senate House BMS systems?
+                - What access levels are defined for controllers in the Retort House and Dentistry BMS manuals?
+                - How does the Mitsubishi AC controller integrate with the Trend IQ4 BMS?
+
+                **Counting queries:**
+                - How many buildings are derelict?
+                - Which buildings have fras?
+                - Which buildings have pending maintenance jobs?
+                
+                """
+            )
+
+
+def render_sidebar():
+    """Render the sidebar with settings and building cache status."""
+    with st.sidebar:
+        st.header("Settings")
+        # Check cache status using function instead of global variable
+        try:
+            cache_status = get_cache_status()
+            if cache_status['populated']:
+                building_count = cache_status.get('canonical_names', 0)
+                alias_count = cache_status.get('aliases', 0)
+
+                st.success(f"✅ Building cache: {building_count} buildings")
+                with st.expander("Cache Details"):
+                    st.write(f"**Canonical names:** {building_count}")
+                    st.write(f"**Aliases/abbreviations:** {alias_count}")
+                    st.write(
+                        f"**Total mappings:** {cache_status.get('total_mappings', 0)}")
+
+                    # Show sample buildings
+                    building_names = get_building_names_from_cache()
+                    if building_names:
+                        st.write("**Sample buildings:**")
+                        for name in sorted(building_names)[:5]:
+                            st.write(f"- {name}")
+                        if len(building_names) > 5:
+                            st.write(f"... and {len(building_names) - 5} more")
+            else:
+                st.warning("⚠️ Building cache not initialised")
+                st.caption(
+                    "Building name detection limited to pattern matching")
+        except Exception as e:  # pylint: disable=broad-except
+            st.warning(f"⚠️ Cache status unavailable: {e}")
+            st.caption("Building name detection limited to pattern matching")
+
+        st.markdown("---")
+
+        top_k = st.slider("Results per query", min_value=1,
+                          max_value=25, value=5, step=1, help="Number of results to return per query")
+
+        if "generate_llm_answer" not in st.session_state:
+            st.session_state.generate_llm_answer = True
+
+        generate_llm_answer = st.checkbox(
+            "Generate AI answer from search results",
+            value=st.session_state.generate_llm_answer,
+            help="If disabled, you'll only see the retrieved passages."
+        )
+        st.session_state.generate_llm_answer = generate_llm_answer
+
+        st.markdown("---")
+        st.info(f"**Minimum Score Threshold:** {MIN_SCORE_THRESHOLD}")
+
+        st.markdown("---")
+        if st.button("Clear Chat History"):
+            st.session_state.messages = []
+            st.session_state.last_results = []
+            st.rerun()
+
+        st.markdown("---")
+        with st.expander("Search Details"):
+            st.write(f"**Indexes:** {', '.join(TARGET_INDEXES)}")
+            st.write(
+                f"**Namespaces:** {'all available' if SEARCH_ALL_NAMESPACES else DEFAULT_NAMESPACE}")
+            st.caption(
+                "Enhanced: Smart query classification, building-aware search with metadata filtering, document-level date search, and relevance threshold.")
+            st.caption(
+                "Two-stage search: Stage 1 uses metadata filters for building-specific queries, Stage 2 falls back to semantic search with boosting.")
+
+    return top_k
+
+
+def display_search_results(results):
+    """Display search results in an expandable section."""
+    if not results:
+        return
+
+    with st.expander(f"📚 Search Results ({len(results)} found)", expanded=False):
+        for i, result in enumerate(results, 1):
+            # Highlight the top result
+            if i == 1:
+                st.markdown('<div class="top-result-highlight">🥇 <strong>TOP RESULT</strong></div>',
+                            unsafe_allow_html=True)
+
+            st.markdown(
+                f"**{i}. Score:** {result.get('score', 0):.3f}  \n"
+                f"_Document:_ `{result.get('key', 'Unknown')}`  •  _Index:_ `{result.get('index', '?')}`  •  _Namespace:_ `{result.get('namespace', '__default__')}`"
+            )
+
+            # Show building name if available
+            building_name = result.get('building_name', '')
+            if building_name:
+                st.caption(f"🏢 Building: {building_name}")
+
+            snippet = result.get("text") or "_(no text in metadata)_"
+            st.write(snippet[:500] + "..." if len(snippet) > 500 else snippet)
+            st.caption(f"ID: {result.get('id') or '—'}")
+
+            if i < len(results):
+                st.markdown("---")
+
+
+def display_publication_date_info(publication_date_info):
+    """Display publication date information."""
+    if publication_date_info:
+        st.markdown(f'<div class="publication-date">{publication_date_info}</div>',
+                    unsafe_allow_html=True)
+
+
+def display_low_score_warning():
+    """Display low score warning."""
+    st.markdown('<div class="low-score-warning">⚠️ Results below relevance threshold</div>',
+                unsafe_allow_html=True)
+
+
+def initialise_chat_history():
+    """Initialise chat history if not present."""
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": "Hello! I'm Alfred 🦍, your helpful assistant at the University of Bristol. I can help you find information about BMS description of operations documents, FRAs and maintenance requests and jobs across the UoB estate. What would you like to know?"
+            }
+        ]
+
+
+def display_chat_history():
+    """Display all chat messages from history."""
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+            # Display publication date info if it exists
+            if "publication_date_info" in message and message["publication_date_info"]:
+                display_publication_date_info(message["publication_date_info"])
+
+            # Display low score warning if applicable
+            if message.get("score_too_low", False):
+                display_low_score_warning()
+
+            # Display search results if they exist
+            if "results" in message:
+                display_search_results(message["results"])

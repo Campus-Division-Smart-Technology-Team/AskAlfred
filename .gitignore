@@ -1,0 +1,32 @@
+# environment
+.env
+*.env
+.env.*
+
+# keys
+config/secrets/*
+**/secrets/*
+*.key
+*.pem
+
+# local caches
+__pycache__/
+.cache/
+*.pkl
+*.bin
+*.json
+*.pklz
+
+# embeddings + models
+intent_embeddings.pkl
+*.npy
+!models/
+!models/*.zip
+!models/all-MiniLM-L6-v2/**
+
+
+# building data
+buildings_cache.json
+planon_data_*.json
+Alfred/
+

@@ -27,7 +27,7 @@ A sophisticated, context-aware intent classifier using **Hugging Face's Sentence
 - Loads pre-trained model from local `models/all-MiniLM-L6-v2/` directory or auto-downloads from Hugging Face
 - Auto-extracts zipped models at startup for convenience
 - Generates and caches intent embeddings for all query types (pickled for speed in `intent_embeddings_cache.pkl`)
-- Returns calibrated confidence scores using **softmax normalization**
+- Returns calibrated confidence scores using **softmax normalisation**
 - Provides both semantic and pattern-based classification with automatic fallback
 
 **Advanced Capabilities:**
@@ -107,11 +107,11 @@ Alfred's architecture follows a **modular, layered design**:
 | **`search_core` package** | Unified structured + semantic retrieval engine |
 | → `search_router.py` | Unified entry point for structured and semantic searches. |
 | → `search_instructions.py` | Defines `SearchInstructions` dataclass to pass structured search intent. |
-| → `semantic_search.py` | Runs Pinecone semantic vector retrieval + OpenAI summarization. |
+| → `semantic_search.py` | Runs Pinecone semantic vector retrieval + OpenAI summarisation. |
 | → `planon_search.py` | Handles property and Planon-related structured queries. |
 | → `maintenance_search.py` | Handles structured maintenance vector lookups. |
 | → `search_utils.py` | Core utilities for boosting, deduplication, and building filters. |
-| **`building_utils.py`** | Comprehensive building cache, alias, and fuzzy matching utilities (centralized). |
+| **`building_utils.py`** | Comprehensive building cache, alias, and fuzzy matching utilities (centralised). |
 | **`structured_queries.py`** | Rule-based structured detection for counting, ranking, maintenance, and property queries. |
 | **`config.py`** | Global environment, API keys, and Pinecone/OpenAI configuration. |
 
@@ -121,7 +121,7 @@ Alfred's architecture follows a **modular, layered design**:
 
 Alfred uses a **Chain of Responsibility pattern** via the `QueryManager`:
 
-1. **Preprocessing**: Extracts buildings, business terms, and analyzes query complexity
+1. **Preprocessing**: Extracts buildings, business terms, and analyses query complexity
 2. **Intent Classification**: NLPIntentClassifier predicts intent with confidence score
 3. **Handler Selection**: Each handler declares a `priority` (lower number = higher priority)
 4. **Execution**: The `QueryManager` sequentially checks each handler's `can_handle()` method
@@ -178,18 +178,18 @@ results, answer, pub_date, score_flag = execute(SearchInstructions(
 - Building-specific result filtering  
 - Metadata filter generation for Pinecone
 
-Building cache initialization runs at app startup, ensuring that all fuzzy and alias-based matches are available to every handler.
+Building cache initialisation runs at app startup, ensuring that all fuzzy and alias-based matches are available to every handler.
 
 ---
 
 ## 🚀 Features Summary
 
 - **NLP Intent Classification**: Hugging Face SentenceTransformers with context-aware biasing
-- **Modular Handlers**: Each query type handled by a specialized module  
+- **Modular Handlers**: Each query type handled by a specialised module  
 - **Unified Router**: `search_core` dispatches structured vs. semantic searches  
 - **Smart Building Cache**: Fuzzy and alias matching across multiple metadata fields  
-- **OpenAI + Pinecone Integration**: RAG-style search and summarization  
-- **Logging Pipeline**: Standardized, color-coded INFO logs across all modules  
+- **OpenAI + Pinecone Integration**: RAG-style search and summarisation  
+- **Logging Pipeline**: Standardised, color-coded INFO logs across all modules  
 - **Error Isolation**: Each handler logs and fails gracefully without blocking others  
 
 ---
@@ -276,7 +276,7 @@ The NLPIntentClassifier expects:
 | `query_classifier.py` | ❌ Removed → replaced by `NLPIntentClassifier` |
 | Inline semantic + planon logic | ✅ Now in `search_router.execute()` |
 | `perform_federated_search()` | ✅ Replaced by `SearchInstructions` + unified router |
-| Multiple building filters | ✅ Centralized in `building_utils.py` |
+| Multiple building filters | ✅ Centralised in `building_utils.py` |
 | One-file design | ✅ Modular, extensible handler framework |
 | Simple keyword matching | ✅ Hugging Face SentenceTransformers with context biasing |
 

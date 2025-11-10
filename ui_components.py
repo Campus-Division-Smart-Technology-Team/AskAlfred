@@ -156,8 +156,9 @@ def render_tabs():
                 - List the fire risks at Old Park Hill
                 
                 **Building abbreviations:**
-                - Does DHB have an fra?
-                - Tell me about SHB
+                - Where is DHB?
+                - Tell me about BDFI
+                - What are the maintenance requests at DEFRA?
 
                 """
             )
@@ -165,8 +166,8 @@ def render_tabs():
             st.markdown(
                 """
                 **BMS topics:**
-                - How does the frost protection sequence operate in the Senate House BMS systems?
-                - What access levels are defined for controllers in the Retort House and Dentistry BMS manuals?
+                - How does the frost protection sequence operate in the Senate House BMS?
+                - How do the AHUs in Indoor Sports Hall behave?
                 - How does the Mitsubishi AC controller integrate with the Trend IQ4 BMS?
 
                 **Counting queries:**

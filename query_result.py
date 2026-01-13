@@ -23,17 +23,17 @@ class QueryResult:
     Represents the final response for a processed query.
 
     Required:
-        query (str) – The original user query
-        answer (str) – Final answer text produced by a handler
+        query (str) - The original user query
+        answer (str) - Final answer text produced by a handler
 
     Optional fields:
-        results (list) – Structured search results, documents, rows, etc.
-        handler_used (str) – Name of the handler that produced the answer
-        query_type (str) – Logical category: 'counting', 'maintenance', etc.
-        success (bool) – Indicates whether the handler executed successfully
-        publication_date_info (Any) – Optional semantic search metadata
-        score_too_low (bool | None) – Embedding score threshold signal
-        metadata (dict) – Arbitrary enriched information
+        results (list) - Structured search results, documents, rows, etc.
+        handler_used (str) - Name of the handler that produced the answer
+        query_type (str) - Logical category: 'counting', 'maintenance', etc.
+        success (bool) - Indicates whether the handler executed successfully
+        publication_date_info (Any) - Optional semantic search metadata
+        score_too_low (bool | None) - Embedding score threshold signal
+        metadata (dict) - Arbitrary enriched information
     """
 
     # ------------------------------------------------------------------

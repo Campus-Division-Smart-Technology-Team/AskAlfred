@@ -6,6 +6,7 @@ from building_utils import (
     get_building_names_from_cache,
     BuildingCacheManager
 )
+from building_validation import is_valid_building_name
 from emojis import EMOJI_TICK
 
 
@@ -38,7 +39,22 @@ class BuildingExtractor(CachingPreprocessor):
         # AUTHORITATIVE function call
         detected = extract_building_from_query(query, known_buildings)
 
+        # explicitly record “no valid building” so QueryManager can
+        # still inherit from previous turn.
         if not detected:
+            context.add_to_cache("building_detected", False)
+            self.logger.debug("No building detected in query")
+            return
+
+        if not is_valid_building_name(detected):
+            self.logger.info(
+                "⚠️ Ignoring invalid building candidate from extractor: %s",
+                detected,
+            )
+            context.add_to_cache("building_detected", False)
+            context.add_to_cache("building_invalid_candidate", detected)
+            # Don't set context.building at all — keep context clean so
+            # downstream can safely inherit previous building.
             return
 
         # Multi-building support:

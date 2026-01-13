@@ -50,7 +50,7 @@ from ingest_utils import (
 )
 # NEW centralised building logic
 from building_normaliser import normalise_building_name
-from filename_building_parser2 import get_building_with_confidence, should_flag_for_review
+from filename_building_parser import get_building_with_confidence, should_flag_for_review
 
 
 # ============================================================================
@@ -67,6 +67,46 @@ def is_empty(value) -> bool:
     if isinstance(value, (list, dict, set, tuple)):
         return len(value) == 0
     return False
+
+
+def parse_pivot_header(col_str: str, is_requests: bool) -> dict:
+    """
+    Parse both Requests and Jobs headers.
+
+    Requests examples:
+        "Asbestos Requests - Other - In progress"
+        "ASU Requests - RM Priority 1 - Complete"
+        → {category, priority, status}
+
+    Jobs examples:
+        "BEMS Controls Jobs - Complete"
+        "ASU Jobs - In progress"
+        → {category, status}
+
+    Returns a dict with 2 or 3 keys depending on type.
+    """
+
+    # Strip the keyword ("Requests" or "Jobs")
+    keyword = "Requests" if is_requests else "Jobs"
+    cleaned = col_str.replace(keyword, "").strip()
+
+    parts = [p.strip() for p in cleaned.split("-") if p.strip()]
+
+    if is_requests:
+        # Expect: category / priority / status
+        if len(parts) == 1:
+            return {"category": parts[0], "priority": "Unknown", "status": "Unknown"}
+        elif len(parts) == 2:
+            return {"category": parts[0], "priority": parts[1], "status": "Unknown"}
+        else:
+            return {"category": parts[0], "priority": parts[1], "status": parts[2]}
+
+    else:
+        # Jobs only have: category / status
+        if len(parts) == 1:
+            return {"category": parts[0], "status": "Unknown"}
+        else:
+            return {"category": parts[0], "status": parts[1]}
 
 
 # ---------------- Environment & Setup ----------------
@@ -118,14 +158,14 @@ class IngestContext:
 
     def __init__(self, config: BatchIngestConfig):
         """
-        Initialize ingestion context.
+        Initialise ingestion context.
 
         Args:
             config: Ingestion configuration
         """
         self.config = config
 
-        # Initialize API clients (lazy loading)
+        # Initialise API clients (lazy loading)
         self._pinecone = None
         self._openai = None
         self._index = None
@@ -307,7 +347,7 @@ def process_document(
         # ----------------------------------------------------------
         # 2. Extract text
         # ----------------------------------------------------------
-        if ext_ == "csv":
+        if ext_ in ("csv", "xlsx"):
             if "maintenance" in key.lower():
                 docs = extract_maintenance_csv(key, data, alias_to_canonical)
             else:
@@ -378,17 +418,39 @@ def process_document(
             for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
                 vector_id = make_id(base_path, doc_key, i)
 
-                # Determine document type
+                key_lower = key.lower()
+                data_type = (extra_metadata.get("data_type") or "").lower()
+
+                # ------------------------------------------------------
+                # Determine document type (incl. maintenance CSVs)
+                # ------------------------------------------------------
                 if is_fire_risk_assessment(key, text):
                     doc_type = "fire_risk_assessment"
                 elif is_bms_document(key, text):
                     doc_type = "operational_doc"
-                elif "planon" in key.lower():
+                elif "planon" in key_lower:
                     doc_type = "planon_data"
-                elif "maintenance request" in key.lower():
+
+                # --- Maintenance requests ---
+                elif (
+                    "maintenance requests" in key_lower
+                    or "maintenance_requests" in key_lower
+                    or "maintenance request" in key_lower
+                    or "maintenance_request" in key_lower
+                    or data_type == "maintenance_requests"
+                ):
                     doc_type = "maintenance_request"
-                elif "maintenance job" in key.lower():
+
+                # --- Maintenance jobs ---
+                elif (
+                    "maintenance jobs" in key_lower
+                    or "maintenance_jobs" in key_lower
+                    or "maintenance job" in key_lower
+                    or "maintenance_job" in key_lower
+                    or data_type == "maintenance_jobs"
+                ):
                     doc_type = "maintenance_job"
+
                 else:
                     doc_type = extra_metadata.get("document_type", "unknown")
 
@@ -891,7 +953,7 @@ def is_bms_document(key: str, text: str = "") -> bool:
 
 
 # ============================================================================
-# CSV EXTRACTION FUNCTIONS (unchanged logic, using context)
+# CSV EXTRACTION FUNCTIONS
 # ============================================================================
 
 def extract_text_csv_by_building_enhanced(
@@ -901,7 +963,6 @@ def extract_text_csv_by_building_enhanced(
 ) -> list[tuple[str, str, str, dict[str, Any]]]:
     """
     Extract property CSV data by building.
-    UNCHANGED logic from original - preserves backward compatibility.
 
     Returns:
         List of (doc_key, canonical_name, text, extra_metadata) tuples
@@ -992,12 +1053,85 @@ def extract_maintenance_csv(
     alias_to_canonical: dict[str, str]
 ) -> list[tuple[str, str, str, dict[str, Any]]]:
     """
-    Extract maintenance CSV data (Requests or Jobs).
-    UNCHANGED logic from original - preserves backward compatibility.
+    Extract maintenance CSV data (Requests or Jobs), supporting:
+      • Requests → category / priority / status
+      • Jobs → category / status
 
     Returns:
-        List of (doc_key, canonical_name, text, extra_metadata) tuples
+        List of (doc_key, canonical_name, text, extra_metadata) tuples.
     """
+    import io
+    import json
+    import logging
+    import pandas as pd
+    import re
+
+    # ---------------------------------------------------------
+    # Priority Normalisation
+    # ---------------------------------------------------------
+    PRIORITY_MAPPING = {
+        "rm priority 1": "P1",
+        "rm priority 2": "P2",
+        "rm priority 3": "P3",
+        "rm priority 4": "P4",
+        "rm priority 5": "P5",
+        "rm priority 6": "P6",
+        "planned & preventative maintenance": "PPM",
+        "other": "Other",
+    }
+
+    PRIORITY_PATTERN = re.compile(r"rm\s*priority\s*(\d+)", re.IGNORECASE)
+
+    def normalise_priority(label: str) -> str:
+        if not label:
+            return "Unknown"
+
+        cleaned = label.strip().lower()
+
+        # Direct match
+        for raw, canon in PRIORITY_MAPPING.items():
+            if cleaned.startswith(raw):
+                return canon
+
+        # RM Priority X fallback
+        m = PRIORITY_PATTERN.search(label)
+        if m:
+            return f"P{m.group(1)}"
+
+        # Fallback for "Other"
+        if cleaned == "other":
+            return "Other"
+
+        return cleaned
+
+    # ---------------------------------------------------------
+    # Header Parser (Requests → 3 layers, Jobs → 2 layers)
+    # ---------------------------------------------------------
+    def parse_pivot_header(col_str: str, is_requests: bool) -> dict:
+        keyword = "Requests" if is_requests else "Jobs"
+        cleaned = col_str.replace(keyword, "").strip()
+        parts = [p.strip() for p in cleaned.split("-") if p.strip()]
+
+        # Requests → category / priority / status
+        if is_requests:
+            if len(parts) == 1:
+                return {"category": parts[0], "priority": "Unknown", "status": "Unknown"}
+            elif len(parts) == 2:
+                return {"category": parts[0], "priority": parts[1], "status": "Unknown"}
+            else:
+                return {"category": parts[0], "priority": parts[1], "status": parts[2]}
+
+        # Jobs → category / status
+        else:
+            if len(parts) == 1:
+                return {"category": parts[0], "status": "Unknown"}
+            else:
+                return {"category": parts[0], "status": parts[1]}
+
+    # ---------------------------------------------------------
+    # Main Processing
+    # ---------------------------------------------------------
+
     try:
         df = pd.read_csv(io.BytesIO(data))
 
@@ -1009,7 +1143,7 @@ def extract_maintenance_csv(
             )
             return []
 
-        # Determine if this is Requests or Jobs based on column names
+        # Identify Requests vs Jobs
         is_requests = any(
             "Requests" in col for col in df.columns if col != building_col)
         data_type = "Maintenance Requests" if is_requests else "Maintenance Jobs"
@@ -1018,71 +1152,84 @@ def extract_maintenance_csv(
 
         building_docs = []
 
+        # Iterate buildings
         for _, row in df.iterrows():
+
             building_name = row.get(building_col)
             if pd.isna(building_name):
                 continue
 
             canonical_name = str(building_name).strip()
 
-            # Build searchable text representation
             building_text = f"Building: {canonical_name}\n"
             building_text += f"Data Type: {data_type}\n\n"
 
-            # Collect metadata
             extra_metadata = {
                 "canonical_building_name": canonical_name,
                 "data_type": data_type.lower().replace(" ", "_"),
                 "file_source": key
             }
 
-            # Parse maintenance categories and counts into structured format
             maintenance_metrics = {}
             total_items = 0
 
+            # --------------------------
+            # COLUMN-BY-COLUMN PROCESSING
+            # --------------------------
             for col, val in row.items():
+
                 if col == building_col or pd.isna(val) or val == 0:
                     continue
 
+                col_str = str(col)
+
+                expected_keyword = "Requests" if is_requests else "Jobs"
+                if expected_keyword not in col_str:
+                    continue
+
                 try:
-                    col_str = str(col)
+                    parsed = parse_pivot_header(col_str, is_requests)
 
-                    if is_requests:
-                        if " Requests " not in col_str:
-                            continue
-                        parts = col_str.split(" Requests ")
-                        category = parts[0].strip()
-                        status = parts[1].strip() if len(
-                            parts) > 1 else "Unknown"
-                    else:
-                        if " Jobs " not in col_str:
-                            continue
-                        parts = col_str.split(" Jobs ")
-                        category = parts[0].strip()
-                        status = parts[1].strip() if len(
-                            parts) > 1 else "Unknown"
+                    category = parsed["category"]
+                    status = parsed["status"]
 
-                    # Convert to integer count
+                    priority = parsed.get("priority")
+                    if is_requests and priority:
+                        priority = normalise_priority(priority)
+
                     count = int(float(val))
 
-                    # Store in structured format
+                    # --------------------------
+                    # STORE STRUCTURED METRICS
+                    # --------------------------
                     if category not in maintenance_metrics:
                         maintenance_metrics[category] = {}
 
-                    maintenance_metrics[category][status] = count
+                    if is_requests:
+                        # Category → Priority → Status
+                        if priority not in maintenance_metrics[category]:
+                            maintenance_metrics[category][priority] = {}
+                        maintenance_metrics[category][priority][status] = count
+
+                        building_text += f"{category} - {priority} - {status}: {count}\n"
+
+                    else:
+                        # Category → Status
+                        maintenance_metrics[category][status] = count
+                        building_text += f"{category} - {status}: {count}\n"
+
                     total_items += count
 
-                    # Add to searchable text
-                    building_text += f"{category} - {status}: {count}\n"
-
-                except (ValueError, TypeError, IndexError) as e:
+                except Exception as e:
                     logging.warning(
                         "Could not parse column '%s' with value '%s': %s",
                         col, val, e
                     )
                     continue
 
-            # Add structured metrics to metadata
+            # --------------------------
+            # SUMMARY AND METADATA
+            # --------------------------
             if maintenance_metrics:
                 extra_metadata["maintenance_metrics"] = json.dumps(
                     maintenance_metrics)
@@ -1093,34 +1240,38 @@ def extract_maintenance_csv(
                 building_text += "\n=== Summary ===\n"
                 building_text += f"Total {data_type}: {total_items}\n"
                 building_text += f"Categories with activity: {len(maintenance_metrics)}\n"
-                building_text += f"Active categories: {', '.join(sorted(maintenance_metrics.keys()))}\n"
+                building_text += (
+                    "Active categories: "
+                    + ", ".join(sorted(maintenance_metrics.keys()))
+                    + "\n"
+                )
             else:
                 extra_metadata["maintenance_metrics"] = "{}"
                 extra_metadata["total_maintenance_items"] = "0"
                 extra_metadata["categories_count"] = "0"
 
-            # Create unique document key
+            # Document key
             doc_key = f"{data_type} - {canonical_name}"
 
             building_docs.append(
                 (doc_key, canonical_name, building_text, extra_metadata)
             )
 
-        logging.info(
-            "✅ Extracted %d buildings from %s with maintenance data",
-            len(building_docs), data_type
-        )
+        logging.info("✅ Extracted %d buildings from %s",
+                     len(building_docs), key)
         return building_docs
 
-    except Exception as ex:  # pylint: disable=broad-except
-        logging.error("Maintenance CSV extraction failed for %s: %s",
-                      key, ex, exc_info=True)
+    except Exception as ex:
+        logging.error(
+            "Maintenance CSV extraction failed for %s: %s",
+            key, ex, exc_info=True
+        )
         return []
-
 
 # ============================================================================
 # MAIN INGESTION FUNCTION
 # ============================================================================
+
 
 def ingest_local_directory(ctx: IngestContext) -> None:
     """

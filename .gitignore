@@ -18,11 +18,11 @@ __pycache__/
 *.pklz
 
 # embeddings + models
-intent_embeddings.pkl
+intent_embeddings_cache.pkl
 *.npy
-!models/
-!models/*.zip
-!models/all-MiniLM-L6-v2/**
+models/
+models/*.zip
+models/all-MiniLM-L6-v2/**
 
 
 # building data

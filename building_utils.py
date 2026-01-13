@@ -28,7 +28,7 @@ import threading
 from building_normaliser import normalise_building_name
 from pinecone_utils import open_index
 from config import get_index_config
-from emojis import (EMOJI_CONSTRUCTION, EMOJI_CROSS,
+from emojis import (EMOJI_CROSS,
                     EMOJI_BUILDING, EMOJI_CAUTION, EMOJI_TICK, EMOJI_SEARCH)
 # ============================================================================
 # BUILDING NAME CACHE (populated from Pinecone at startup)
@@ -41,6 +41,7 @@ from buildings_cache import (
     INDEXES_WITH_BUILDINGS as _INDEXES_WITH_BUILDINGS,
     CACHE_POPULATED as _CACHE_POPULATED
 )
+from building_validation import INVALID_BUILDING_NAMES, is_valid_building_name
 
 
 class BuildingCacheManager:
@@ -194,6 +195,11 @@ BUILDING_PATTERNS = [
 
     # Pattern 7: Proper-noun sequences (2–4 words) but disallow stopwords
     re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b"),
+
+    # Pattern 8: "tell me about <building>" (1–4 words)
+    re.compile(
+        r"\btell\s+me\s+about\s+([A-Za-z][A-Za-z0-9\s\-\']{2,})",
+        re.IGNORECASE)
 ]
 
 # Question words and common words to filter out
@@ -579,11 +585,6 @@ def populate_building_cache_from_index(
                         _METADATA_FIELDS_CACHE[canonical].add(alias_str)
                         _METADATA_FIELDS_CACHE[canonical].add(alias_lower)
 
-                        # DEBUG: flag aliases that look like BDFI
-                        if alias_lower and ("bdf" in alias_lower or "avon" in canonical.lower()):
-                            logging.info(
-                                "%s Alias candidate loaded: '%s' -> '%s'", EMOJI_CONSTRUCTION, alias_lower, canonical)
-
         num_canonical = len(canonical_names)
 
         if num_canonical > 0:
@@ -598,19 +599,6 @@ def populate_building_cache_from_index(
                 new_aliases_count,
                 new_metadata_fields_count
             )
-            # Check BDFI resolution
-            probe = "bdfi"
-            probe_clean = probe.lower().strip().replace(".", "").replace(" ", "")
-            logging.info(
-                "%s Cache check for '%s': %s", EMOJI_SEARCH, probe_clean, probe_clean in _BUILDING_ALIASES_CACHE)
-            logging.info(
-                "%s Matching keys sample: %s", EMOJI_SEARCH, [k for k in list(_BUILDING_ALIASES_CACHE.keys()) if 'bdf' in k][:5])
-            logging.info(
-                "%s Value for '%s': %s", EMOJI_SEARCH, probe_clean, _BUILDING_ALIASES_CACHE.get(probe_clean))
-        else:
-            logging.info(
-                "%s No building data found in index '%s'", EMOJI_CROSS, resolved_index_name)
-
         return num_canonical
 
     except Exception as e:  # pylint: disable=broad-except
@@ -850,38 +838,49 @@ def extract_building_from_query(
         return None
 
     # Reject obvious non-building maintenance keywords early
-    from maintenance_utils import INVALID_BUILDING_NAMES
+    # from maintenance_utils import INVALID_BUILDING_NAMES
     ql = query.lower()
     query_words = set(ql.split())
 
     # Reject queries containing maintenance keywords *only when no building name present*
     if any(word in query_words for word in INVALID_BUILDING_NAMES):
-        # Allow if ANY significant building words appear in query
-        # Check if multiple words from any building name appear
         has_building_words = False
         for building in (known_buildings or []):
-            # Get significant words from building name (length > 2, not just numbers)
-            building_words = [w.lower() for w in building.split()
-                              if len(w) > 2 and not w.isdigit() and w.replace('-', '').replace('/', '').isalnum()]
+            building_lower = building.lower().strip()
+            if building_lower in INVALID_BUILDING_NAMES:
+                # 👈 don't let "Maintenance" rescue the query
+                continue
 
-            # If 2+ building words appear in query, likely a building reference
+            building_words = [
+                w.lower()
+                for w in building.split()
+                if len(w) > 2
+                and not w.isdigit()
+                and w.replace('-', '').replace('/', '').isalnum()
+            ]
+
             if len(building_words) >= 2:
                 matches = sum(1 for w in building_words if w in query_words)
                 if matches >= 2:
                     has_building_words = True
                     logging.debug(
-                        "%s Found building words: %s words from '%s' in query", EMOJI_TICK, matches, building)
+                        "%s Found building words: %s words from '%s' in query",
+                        EMOJI_TICK, matches, building
+                    )
                     break
-            # For single-word buildings, check if that word appears
             elif len(building_words) == 1 and building_words[0] in query_words:
                 has_building_words = True
                 logging.debug(
-                    "%s Found building word: '%s' from '%s' in query", EMOJI_TICK, building_words[0], building)
+                    "%s Found building word: '%s' from '%s' in query",
+                    EMOJI_TICK, building_words[0], building
+                )
                 break
 
         if not has_building_words:
             logging.debug(
-                "%s Query contains maintenance keywords and no building words — not a building request", EMOJI_CROSS)
+                "%s Query contains maintenance keywords and no building words — not a building request",
+                EMOJI_CROSS,
+            )
             return None
 
     # Phase 1: Try pattern matching with improved filtering
@@ -953,7 +952,8 @@ def validate_building_name_fuzzy(
 ) -> Optional[str]:
     """
     Validate extracted name against known buildings using fuzzy matching.
-    IMPROVED: Checks all metadata field variations with 80% threshold.
+    IMPROVED: Checks all metadata field variations with 80% threshold and
+    rejects invalid/maintenance-like building names consistently.
 
     Args:
         extracted_name: Extracted building name candidate
@@ -977,52 +977,86 @@ def validate_building_name_fuzzy(
 
     # Cache the lowercase version for multiple comparisons
     extracted_lower = extracted_name.lower().strip()
-    # Hard rejection of maintenance-context tokens
-    if extracted_lower in {"maintenance", "request", "requests", "job", "jobs"}:
+
+    # 🔒 Hard rejection of maintenance-context / invalid tokens
+    # (e.g. "maintenance", "request", "job", etc.)
+    if extracted_lower in INVALID_BUILDING_NAMES:
         logging.info(
-            "%s Rejecting '%s' as building (maintenance keyword)", EMOJI_CROSS, extracted_lower)
+            "%s Rejecting '%s' as building (maintenance/invalid keyword)",
+            EMOJI_CROSS,
+            extracted_lower,
+        )
         return None
+
     extracted_norm = normalise_building_name(extracted_name)
+
     # FILTER: Reject if the extracted name is a common query term
-    # This prevents "maintenance" from matching a building named "Maintenance"
     if extracted_lower in QUESTION_WORDS:
         logging.debug(
-            "%a Rejected '%s' - matches common query term", EMOJI_CROSS, extracted_name)
+            "%s Rejected '%s' - matches common query term",
+            EMOJI_CROSS,
+            extracted_name,
+        )
         return None
+
+    # 🔒 Filter known buildings to valid ones only (avoid canonical "Maintenance")
+    valid_buildings: List[str] = [
+        b for b in known_buildings
+        if is_valid_building_name(b)
+    ]
+    if not valid_buildings:
+        return None
+    known_buildings = valid_buildings
 
     # Strategy 1: Exact match in aliases cache
     if BuildingCacheManager.is_populated():
         canonical = _BUILDING_ALIASES_CACHE.get(extracted_lower)
-        if canonical:
-            logging.info("%s Alias exact match: '%s' -> '%s'", EMOJI_TICK,
-                         extracted_name, canonical)
+        if canonical and is_valid_building_name(canonical):
+            logging.info(
+                "%s Alias exact match: '%s' -> '%s'",
+                EMOJI_TICK,
+                extracted_name,
+                canonical,
+            )
             return canonical
 
         # Check canonical names cache
         canonical = _BUILDING_NAMES_CACHE.get(extracted_lower)
-        if canonical:
-            logging.info("%s Canonical exact match: '%s'",
-                         EMOJI_TICK, canonical)
+        if canonical and is_valid_building_name(canonical):
+            logging.info(
+                "%s Canonical exact match: '%s'",
+                EMOJI_TICK,
+                canonical,
+            )
             return canonical
 
     # Strategy 2: Exact match (case-insensitive) in known buildings
     for building in known_buildings:
-        if building.lower() == extracted_lower:
+        if building.lower().strip() == extracted_lower:
+            # is_valid_building_name already enforced in known_buildings
             logging.info("%s Exact match: '%s'", EMOJI_TICK, building)
             return building
 
     # Strategy 3: Substring match (extracted name in building name)
     for building in known_buildings:
         if extracted_lower in building.lower():
-            logging.info("%s Substring match: '%s' in '%s'", EMOJI_TICK,
-                         extracted_name, building)
+            logging.info(
+                "%s Substring match: '%s' in '%s'",
+                EMOJI_TICK,
+                extracted_name,
+                building,
+            )
             return building
 
     # Strategy 4: Reverse substring match (building name in extracted name)
     for building in known_buildings:
         if building.lower() in extracted_lower:
-            logging.info("%s Reverse substring match: '%s' contains '%s'", EMOJI_TICK,
-                         extracted_name, building)
+            logging.info(
+                "%s Reverse substring match: '%s' contains '%s'",
+                EMOJI_TICK,
+                extracted_name,
+                building,
+            )
             return building
 
     # Strategy 5: Fuzzy match against all metadata field variations
@@ -1033,12 +1067,14 @@ def validate_building_name_fuzzy(
 
         for canonical in known_buildings:
             match_result = fuzzy_match_against_metadata_fields(
-                extracted_name, canonical, FUZZY_MATCH_THRESHOLD
+                extracted_name,
+                canonical,
+                FUZZY_MATCH_THRESHOLD,
             )
 
             if match_result:
                 matched_field, score = match_result
-                if score > best_score:
+                if score > best_score and is_valid_building_name(canonical):
                     best_score = score
                     best_match = matched_field
                     best_canonical = canonical
@@ -1050,19 +1086,28 @@ def validate_building_name_fuzzy(
                 best_score * 100,
                 extracted_name,
                 best_canonical,
-                best_match
+                best_match,
             )
             return best_canonical
 
-    # Strategy 6: Standard fuzzy match using difflib (80% similarity)
+    # Strategy 6: Standard fuzzy match using difflib (e.g. ≥ 80% similarity)
     matches = get_close_matches(
-        extracted_name, known_buildings, n=1, cutoff=FUZZY_MATCH_THRESHOLD
+        extracted_name,
+        known_buildings,
+        n=1,
+        cutoff=FUZZY_MATCH_THRESHOLD,
     )
     if matches:
-        logging.info("%s Difflib fuzzy match (≥80%%): '%s' -> '%s'",
-                     EMOJI_TICK,
-                     extracted_name, matches[0])
-        return matches[0]
+        candidate = matches[0]
+        if is_valid_building_name(candidate):
+            logging.info(
+                "%s Difflib fuzzy match (≥%.0f%%): '%s' -> '%s'",
+                EMOJI_TICK,
+                FUZZY_MATCH_THRESHOLD * 100,
+                extracted_name,
+                candidate,
+            )
+            return candidate
 
     logging.debug("%s No match found for '%s'", EMOJI_CROSS, extracted_name)
     return None

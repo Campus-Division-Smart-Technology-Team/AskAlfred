@@ -236,6 +236,10 @@ The NLPIntentClassifier expects:
 - **Cache**: `intent_embeddings_cache.pkl` (auto-generated on first run)
 - **Fallback**: Auto-downloads from Hugging Face if local model not found
 
+### Generated files
+
+- intent_embeddings_cache.pkl is generated at runtime and should not be committed
+
 ### Logging
 
 - Configured globally in `main.py` using `logging.basicConfig()`

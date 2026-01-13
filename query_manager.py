@@ -32,11 +32,35 @@ from query_preprocessors import (
 
 from intent_classifier import NLPIntentClassifier
 from query_types import QueryType
+from session_manager import SessionManager
+from building_validation import INVALID_BUILDING_NAMES
 
+# ============================================================================
+# FOLLOWUP CONFIGs
+# ============================================================================
+
+FOLLOWUP_PREFIXES = {
+    "and", "also", "what about",
+    "those", "them", "that", "this", "these",
+    "any more", "more about", "more on", "tell me more"
+}
+
+FOLLOWUP_SUFFIXES = {
+    "too", "as well", "also"
+}
+
+FOLLOWUP_EXACT = {
+    "and", "also", "what about", "tell me more", "more"
+}
+
+FOLLOWUP_PRONOUNS = {
+    "it", "this", "that", "those", "them", "these"
+}
 
 # ============================================================================
 # QUERY MANAGER
 # ============================================================================
+
 
 class QueryManager:
     """
@@ -47,6 +71,12 @@ class QueryManager:
       • Cache responses
       • Track performance stats
     """
+    # Default Routing Thresholds for Configuration
+    DEFAULT_CONFIG = {
+        # Thresholds for hybrid routing. Keys map to internal variables.
+        "RULE_OVERRIDE_THRESHOLD": 0.75,
+        "CONF_THRESHOLD": 0.60,
+    }
 
     def __init__(self, config: Optional[Dict] = None):
         """
@@ -56,6 +86,16 @@ class QueryManager:
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.config = config
+
+        # Merge routing config with defaults for tunability
+        self.routing_config = self.DEFAULT_CONFIG.copy()
+        # Allows routing thresholds to be passed in a 'routing' dict or at the top level
+        if config:
+            self.routing_config.update(config.get("routing", {}))
+            # Also allow direct top-level overrides (for simplicity)
+            for key in self.DEFAULT_CONFIG:
+                if key in config:
+                    self.routing_config[key] = config[key]
 
         # Build handler list
         if config:
@@ -132,6 +172,85 @@ class QueryManager:
                 self.logger.error(f"Could not load {handler_name}: {e}")
 
         return handlers
+
+    @staticmethod
+    def is_followup_query(q: str,
+                          prev_context: dict | None,
+                          *,
+                          previous_intent,
+                          ml_intent_confidence
+                          ) -> bool:
+        if not q:
+            return False
+
+        q = q.strip().lower()
+        tokens = q.split()
+
+        # 1️⃣ Exact matches ("and", "more", etc.)
+        if q in FOLLOWUP_EXACT:
+            return True
+
+        # 2️⃣ Prefix matches ("and show", "what about X")
+        if any(q.startswith(p + " ") or q == p for p in FOLLOWUP_PREFIXES):
+            return True
+
+        # 3️⃣ Suffix matches ("too", "as well")
+        if any(q.endswith(" " + s) or q == s for s in FOLLOWUP_SUFFIXES):
+            return True
+
+        # 4️⃣ Pronoun-led queries ("those with alarms", "them only")
+        if tokens and tokens[0] in FOLLOWUP_PRONOUNS and prev_context:
+            return True
+
+        # 5️⃣ Ultra-short continuation ("more", "next", "continue")
+        if len(tokens) <= 2 and prev_context:
+            return True
+            # 6️⃣ ML uncertainty + previous intent → assume follow-up
+        if (
+            previous_intent
+            and prev_context
+            and not prev_context.get("building")
+            and ml_intent_confidence is not None
+            and ml_intent_confidence < 0.55
+        ):
+            return True
+        return False
+
+    def _maybe_inherit_followup_context(self, context: QueryContext) -> None:
+        """
+        If the user asked a follow-up (starts with 'and', 'what about', etc.)
+        and preprocessors didn't extract scope (building), inherit
+        it from the previous_context to maintain continuity.
+        """
+        q = context.query.strip().lower()
+        prev = context.previous_context or {}
+
+        if not self.is_followup_query(q,
+                                      prev,
+                                      previous_intent=context.previous_intent,
+                                      ml_intent_confidence=context.ml_intent_confidence,):
+            return
+
+        # inherit building
+        prev_building = prev.get("building")
+        if not context.building and prev_building:
+            context.building = prev_building
+            # Log the successful inheritance for debugging!
+            self.logger.info(
+                "✅ CONTEXT INHERITED: Building '%s' from previous turn.",
+                context.building
+            )
+            context.routing_notes.append(
+                "inherited_building_from_previous_turn")
+        else:
+            # Log why inheritance did not occur
+            self.logger.info(
+                "❌ CONTEXT INHERITANCE SKIPPED: Followup is '%s' but "
+                "context.building is '%s' or "
+                "previous context missing building (%s).",
+                q, context.building, 'building' in prev
+            )
+
     # =========================================================================
     # Preprocessor initialisation
     # =========================================================================
@@ -170,12 +289,49 @@ class QueryManager:
         # Create context
         context = QueryContext(query=query, **kwargs)
 
+        # ---------------------------------------------------
+        # Load previous conversational memory from SessionManager
+        # ---------------------------------------------------
+        prev_context_dict = SessionManager.get_last_query_context()
+        prev_intent, prev_conf = SessionManager.get_last_intent()
+
+        # New Defensive Logging
+        if prev_context_dict:
+            self.logger.info(
+                f"MEMORY LOADED: Previous building: {prev_context_dict.get('building')!r}"
+            )
+
+        # Attach previous QueryContext data (if any)
+        if prev_context_dict:
+            context.previous_context = prev_context_dict
+        else:
+            context.previous_context = None
+
+        # Attach previous intent + confidence
+        context.previous_intent = prev_intent
+        context.previous_intent_confidence = prev_conf
+
+        # Store this info in routing notes for debugging
+        if prev_context_dict:
+            context.routing_notes.append("previous_context_available")
+        if prev_intent:
+            context.routing_notes.append(
+                f"previous_intent={prev_intent}, conf={prev_conf}"
+            )
+
         # Cache check
         cache_key = self._make_cache_key(context)
         if self.cache_enabled and cache_key in self.cache:
             self.stats["cached_queries"] += 1
 
             result = self.cache[cache_key]
+
+            # persist context snapshot
+            SessionManager.set_last_query_context(context)
+
+            # use cached result’s query_type + no confidence (confidence was for ML path)
+            SessionManager.set_last_intent(result.query_type, None)
+
             elapsed_ms = (time.time() - start_time) * 1000
 
             # Record telemetry for cached responses (coerce None -> "unknown")
@@ -193,6 +349,21 @@ class QueryManager:
         # Preprocessors
         # ---------------------------------------------------
         self._run_preprocessors(context)
+        # 🔧 Normalise / clean building extracted by preprocessors
+        if context.building and context.building.lower() in INVALID_BUILDING_NAMES:
+            self.logger.info(
+                "⚠️ Discarding invalid building from preprocessors: %r",
+                context.building,
+            )
+            context.building = None
+            context.building_filter = None
+            context.routing_notes.append("invalid_building_cleared")
+
+        self._maybe_inherit_followup_context(context)
+
+        if context.building and not context.building_filter:
+            context.building_filter = context.building
+            context.routing_notes.append("synchronised_building_filter")
 
         self.logger.warning(f"FINAL QUERY BEFORE ROUTING: {context.query!r}")
 
@@ -229,9 +400,32 @@ class QueryManager:
         if self.cache_enabled:
             self.cache[cache_key] = result
 
+        # ---------------------------------------------------
+        # 5. CONVERSATIONAL MEMORY PERSISTENCE
+        # ---------------------------------------------------
+        self.logger.warning(
+            f"MEMORY PERSISTENCE CHECK: context.building is {context.building!r}"
+        )
+        try:
+            # Save compact QueryContext into session memory
+            SessionManager.set_last_query_context(context)
+
+            # Save ML intent (if available) otherwise fallback to handler type
+            final_intent = (
+                context.predicted_intent
+                if context.predicted_intent
+                else route.handler.query_type
+            )
+            SessionManager.set_last_intent(
+                final_intent, context.ml_intent_confidence)
+        except Exception as e:
+            self.logger.error("Failed to persist session memory: %s", e)
+
         # Total round-trip time for everything
         total_elapsed_ms = (time.time() - start_time) * 1000
         result.processing_time_ms = total_elapsed_ms
+        logging.info("⏱ QueryManager.process_query took %.2f ms",
+                     result.processing_time_ms)
 
         return result
 
@@ -314,7 +508,7 @@ class QueryManager:
         # "Rule layer wins UNLESS ML predicts semantic_search
         #   with high confidence (≥ 0.75)"
         # --------------------------------------------------------
-        RULE_OVERRIDE_THRESHOLD = 0.75
+        RULE_OVERRIDE_THRESHOLD = self.routing_config["RULE_OVERRIDE_THRESHOLD"]
 
         if best_handler and best_handler.__class__.__name__ != "SemanticSearchHandler":
             # Defer ML override check until ML is computed
@@ -366,7 +560,7 @@ class QueryManager:
         # -------------------------------------------------------------------
         # 3) CONFIDENCE THRESHOLD -> route to general RAG if confidence is low
         # -------------------------------------------------------------------
-        CONF_THRESHOLD = 0.60
+        CONF_THRESHOLD = self.routing_config["CONF_THRESHOLD"]
         if ml is None or ml.confidence < CONF_THRESHOLD:
             context.routing_notes.append("ml_low_confidence_to_semantic")
             sem = next(
@@ -438,8 +632,19 @@ class QueryManager:
     # =========================================================================
 
     def _make_cache_key(self, context: QueryContext) -> str:
-        """Deterministic cache key."""
-        return f"{context.query}:{context.top_k}:{context.building_filter}"
+        """
+        Deterministic cache key. Uses the corrected query if preprocessors 
+        ran, as this reflects the content actually processed by handlers, 
+        improving cache validity.
+        """
+        # Use the corrected query if SpellCheck or another preprocessor ran,
+        # otherwise use the original query.
+        query_part = context.corrected_query or context.query
+
+        # Ensure we capture building context which influences the search results
+        building_part = context.building_filter or ""
+
+        return f"{query_part}:{context.top_k}:{building_part}"
 
     def _update_stats(self, handler_name: str, query_type: str, elapsed_ms: float, success: bool):
         # --- Update global totals ---

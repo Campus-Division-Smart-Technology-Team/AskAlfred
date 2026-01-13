@@ -113,7 +113,6 @@ class SemanticSearchHandler(BaseQueryHandler):
                         "Try rephrasing or adding more detail."
                     )
             # ------------------------------------------------------------
-
             return QueryResult(
                 query=query_text,
                 answer=answer,
@@ -205,7 +204,7 @@ class SemanticSearchHandler(BaseQueryHandler):
 
             return QueryResult(
                 query=context.query,
-                answer="Sorry — something went wrong while retrieving the data.",
+                answer="Sorry, something went wrong while retrieving the data.",
                 results=[],
                 success=False,
                 handler_used="SemanticSearchHandler",

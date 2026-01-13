@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Improved RankingHandler.
+RankingHandler.
 Handles area-based building ranking queries (largest, smallest, top N, sort by area).
 Delegates ranking logic to counting_queries.generate_ranking_answer.
 """
@@ -117,7 +117,7 @@ class RankingHandler(BaseQueryHandler):
             )
 
         except Exception as e:
-            self.logger.error(f"Ranking handler error: {e}", exc_info=True)
+            self.logger.error("Ranking handler error: %s", e, exc_info=True)
 
             return QueryResult(
                 query=query_text,

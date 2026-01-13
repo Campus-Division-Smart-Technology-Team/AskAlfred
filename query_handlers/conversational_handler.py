@@ -12,7 +12,7 @@ import random
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
-from emojis import EMOJI_BUILDING, EMOJI_GORILLA, EMOJI_FIRE, EMOJI_MAINTENANCE
+from emojis import EMOJI_BUILDING, EMOJI_GORILLA, EMOJI_FIRE, EMOJI_MAINTENANCE, EMOJI_SMILE, EMOJI_CHEEKY
 
 from .base_handler import BaseQueryHandler
 
@@ -57,6 +57,20 @@ class ConversationalHandler(BaseQueryHandler):
                 re.compile(r"^how\s+are\s+you\??$", re.IGNORECASE),
                 re.compile(r"^how[' ]s\s+it\s+going\??$", re.IGNORECASE),
             ],
+            # ========================================================================================
+            # ✅ LEGO HOUSE DEMO
+            # ========================================================================================
+            "lego_house_fixtures": [
+                re.compile(
+                    r"^how\s+many\s+light\s+fixtures\s+are\s+in\s+the\s+lego\s+house\??$", re.IGNORECASE),
+            ],  # Dummy question regex for Lego House demo
+            "seriously": [
+                re.compile(r"^seriously,?\s*is\s+.+\s+in\s+.+\??$",
+                           re.IGNORECASE),
+            ],  # Dummy question regex for Lego House demo
+            "yes_no": [
+                re.compile(r"^is\s+.+\s+in\s+.+\??$", re.IGNORECASE),
+            ],  # Dummy question regex for Lego House demo
         }
 
         # Response sets
@@ -84,8 +98,20 @@ class ConversationalHandler(BaseQueryHandler):
             "smalltalk": [
                 "I'm operating smoothly — ready when you are.",
                 "Doing well. What can I help you with?",
-                "All systems running. What’s on your mind?",
+                "All systems running. What's on your mind?",
             ],
+            # ========================================================================================
+            # ✅ LEGO HOUSE DEMO
+            # ========================================================================================
+            "lego_house_fixtures": [
+                f"The Lego House has 5 light fixtures and 2 desk lamps {EMOJI_SMILE}"
+            ],
+            "seriously": [
+                f"Alright, you got me {EMOJI_CHEEKY}. I thought Jan was around. Yeah, Michael's in",
+            ],  # Dummy response set for Lego House demo
+            "yes_no": [
+                "No",
+            ],  # Dummy response set for Lego House demo
         }
 
     def can_handle(self, context: QueryContext) -> bool:

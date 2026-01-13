@@ -26,6 +26,7 @@ from query_manager import QueryManager
 from pathlib import Path
 import zipfile
 import os
+import time
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
@@ -39,7 +40,7 @@ MODEL_DIR = Path("models/all-MiniLM-L6-v2")
 
 if MODEL_ZIP.exists() and not MODEL_DIR.exists():
     with zipfile.ZipFile(MODEL_ZIP, "r") as z:
-        z.extractall(MODEL_ZIP.parent)
+        z.extractall(MODEL_DIR)
 
 
 os.environ["STREAMLIT_LOG_LEVEL"] = "info"  # ensure Streamlit honours INFO
@@ -100,6 +101,8 @@ def initialise_building_cache():
     Returns:
         Dictionary with cache status
     """
+    t0 = time.time()
+    elapsed = 0
     try:
         # Check if already populated
         cache_status = get_cache_status()
@@ -108,7 +111,7 @@ def initialise_building_cache():
                 "Building cache already populated, skipping initialisation")
             return cache_status
 
-        # Try to populate from ALL indexes (not just the first one)
+        # Try to populate from ALL indexes
         logging.info(
             "Initialising building cache from %d indexes...", len(TARGET_INDEXES))
 
@@ -119,14 +122,16 @@ def initialise_building_cache():
 
         # Check final cache status
         cache_status = get_cache_status()
+        elapsed = time.time() - t0
 
         if cache_status['populated']:
             indexes_with_data = cache_status.get('indexes_with_buildings', [])
             logging.info(
-                "✅ Building cache initialised: %d canonical names, %d aliases from %d index(es)",
+                "✅ Building cache initialised: %d canonical names, %d aliases from %d index(es) in %.2f sec",
                 cache_status['canonical_names'],
                 cache_status['aliases'],
-                len(indexes_with_data)
+                len(indexes_with_data),
+                elapsed
             )
 
             # Log which indexes have building data
@@ -136,16 +141,19 @@ def initialise_building_cache():
                         "Index name - '%s': %d buildings", idx_name, count)
 
             return cache_status
-        else:
-            logging.warning(
-                "⚠️  Could not initialise building cache from any of %d indexes",
-                len(TARGET_INDEXES)
-            )
-            return cache_status
+        logging.warning(
+            "⚠️  Could not initialise building cache from any of %d indexes",
+            len(TARGET_INDEXES)
+        )
+        return cache_status
 
     except Exception as e:  # pylint: disable=broad-except
-        logging.error("Error initialising building cache: %s",
-                      e, exc_info=True)
+        logging.error(
+            "❌ Error initialising building cache after %.2f sec: %s",
+            elapsed,
+            e,
+            exc_info=True
+        )
         return {
             'populated': False,
             'canonical_names': 0,
@@ -192,21 +200,27 @@ def handle_chat_input(top_k: int):
 def handle_query_with_manager(query: str, top_k: int):
     """
     New query manager path.
-
-    This uses the centralized QueryManager for all routing decisions.
+    This uses the centralised QueryManager for all routing decisions.
     """
+
+    # ✅ Persist the manager across Streamlit reruns
+    if "manager" not in st.session_state:
+        st.session_state.manager = QueryManager()
+    manager = st.session_state.manager
 
     with st.chat_message("assistant", avatar=EMOJI_GORILLA):
         with st.spinner("Processing your query..."):
             try:
-                # Create manager instance
-                manager = QueryManager()
-
                 building = extract_building_from_query(query)
 
                 # Process query
                 result = manager.process_query(
-                    query, top_k=top_k, building_filter=building)
+                    query,
+                    top_k=top_k,
+                    building_filter=building,
+                    history=st.session_state.messages,
+                    rolling_summary=st.session_state.summary
+                )
 
                 # Store results
                 st.session_state.last_results = result.results
@@ -215,12 +229,10 @@ def handle_query_with_manager(query: str, top_k: int):
                 if result.answer:
                     st.markdown(result.answer)
 
-                # ✅ Guarded UI elements
-                # Display publication date if the attribute exists and has a value
+                # Optional UI elements
                 if getattr(result, "publication_date_info", None):
                     display_publication_date_info(result.publication_date_info)
 
-                # Display low-score warning only if the attribute exists and is True
                 if getattr(result, "score_too_low", False):
                     display_low_score_warning()
 
@@ -234,7 +246,7 @@ def handle_query_with_manager(query: str, top_k: int):
                     "handler_used": result.handler_used or "Unknown"
                 })
 
-                # Debug info (only if debug mode enabled)
+                # Debug info
                 if st.session_state.get('debug_mode', False):
                     with st.expander("🔍 Debug Info"):
                         st.json({
@@ -315,7 +327,9 @@ def main():
     render_custom_css()
 
     # Initialise building cache
+    t0 = time.time()
     cache_status = initialise_building_cache()
+    logging.info("⏱ Building cache init took %.1f s", time.time() - t0)
 
     if not cache_status['populated']:
         st.warning(
@@ -340,6 +354,10 @@ def main():
 
     # Initialise and display chat
     initialise_chat_history()
+    # Conversation state
+    if "summary" not in st.session_state:
+        st.session_state.summary = ""
+
     display_chat_history()
 
     # Handle new chat input
@@ -358,7 +376,7 @@ def display_system_status():
             st.markdown("---")
             st.markdown("### 🔧 System Status")
 
-            if USE_QUERY_MANAGER:
+            if USE_QUERY_MANAGER and "manager" in st.session_state:
                 manager = QueryManager()
                 stats = manager.get_statistics()
 
@@ -383,6 +401,7 @@ def handle_direct_response(response: str):
             "role": "assistant",
             "content": response
         })
+        update_conversation_summary()
 
 
 def safe_execute(instr: SearchInstructions) -> tuple[list[dict[str, Any]], str, str, bool]:
@@ -537,6 +556,45 @@ def display_last_results():
             # Add separator between results
             if i < result_count:
                 st.markdown("---")
+
+
+def update_conversation_summary():
+    """Generate or extend a rolling conversation summary."""
+    if len(st.session_state.messages) < 4:
+        # not enough context yet
+        return
+
+    last_turns = st.session_state.messages[-4:]  # last few messages
+    formatted = "\n".join(
+        f"{m['role']}: {m['content']}" for m in last_turns)
+
+    # Pass summary + new messages through your LLM
+    combined_prompt = f"""
+Here is the existing conversation summary:
+{st.session_state.summary}
+
+Here are the last few dialogue turns:
+{formatted}
+
+Please produce an updated, concise summary that preserves all facts.
+"""
+
+    from openai import OpenAI
+    client = OpenAI()
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "You summarise conversations."},
+                      {"role": "user", "content": combined_prompt}],
+            max_tokens=150,
+        )
+        content = response.choices[0].message.content
+        st.session_state.summary = content.strip() if content else ""
+
+    except Exception:
+        # don't break the chat if summarisation fails
+        pass
 
 
 # ============================================================================

@@ -61,7 +61,10 @@ class MaintenanceHandler(BaseQueryHandler):
         try:
             from structured_queries import generate_maintenance_answer
 
-            answer = generate_maintenance_answer(query_text)
+            building_override = context.building or context.building_filter
+
+            answer = generate_maintenance_answer(
+                query_text, building_override=building_override)
 
             if not answer:
                 answer = (

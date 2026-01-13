@@ -27,7 +27,7 @@ def extract_building_from_text(
     known_buildings: list[str],
 ) -> str:
     """Extract building name from text sample using simple matching."""
-    from filename_building_parser2 import TEXT_CUTOFF  # pylint: disable=import-outside-toplevel
+    from filename_building_parser import TEXT_CUTOFF  # pylint: disable=import-outside-toplevel
     if not text_sample:
         return "Unknown"
 

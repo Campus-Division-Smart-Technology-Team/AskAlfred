@@ -45,6 +45,8 @@ class QueryContext:
     query: str
     top_k: int = 10
     building_filter: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = None
+    rolling_summary: Optional[str] = None
 
     # Preprocessor-enriched attributes
     building: Optional[str] = None
@@ -64,6 +66,10 @@ class QueryContext:
     predicted_intent: Optional[QueryType] = None
     ml_intent_confidence: float = 0.0
     routing_notes: List[str] = field(default_factory=list)
+    # Previous query memory (restored from SessionManager)
+    previous_context: Optional[Dict[str, Any]] = None
+    previous_intent: Optional[str] = None
+    previous_intent_confidence: Optional[float] = None
 
     # ----------------------------------------------------------------------
     # Context helper methods
@@ -101,6 +107,8 @@ class QueryContext:
 
     def __repr__(self) -> str:
         return (
-            f"QueryContext(query={self.query!r}, building={self.building!r}, "
-            f"document_type={self.document_type!r}, complexity={self.complexity!r})"
+            f"QueryContext("
+            f"query={self.query!r}, building={self.building!r}, "
+            f"document_type={self.document_type!r}, complexity={self.complexity!r}, "
+            f"prev_intent={self.previous_intent!r})"
         )

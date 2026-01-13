@@ -190,6 +190,44 @@ DOC_TYPE_NAMES_SIMPLE = {
     "unknown": "Unknown document types",
 }
 
+PRIORITY_MAPPING = {
+    "rm priority 1": "P1",
+    "rm priority 2": "P2",
+    "rm priority 3": "P3",
+    "rm priority 4": "P4",
+    "rm priority 5": "P5",
+    "rm priority 6": "P6",
+    "planned & preventative maintenance": "PPM",
+    "other": "Other",
+}
+
+
+PRIORITY_PATTERN = re.compile(r"rm\s*priority\s*(\d+)", re.IGNORECASE)
+
+
+def normalise_priority(label: str) -> str:
+    """
+    Convert raw priority labels (e.g. 'RM Priority 1 - Within 2 hours')
+    into canonical codes (e.g. 'P1', 'PPM', 'Other').
+    """
+    if not label:
+        return "Unknown"
+
+    cleaned = label.strip().lower()
+
+    # Exact match first
+    for key, value in PRIORITY_MAPPING.items():
+        if cleaned.startswith(key):
+            return value
+
+    # Pattern match for RM Priority X variants
+    m = PRIORITY_PATTERN.search(label)
+    if m:
+        return f"P{m.group(1)}"
+
+    return "Other" if cleaned == "other" else cleaned
+
+
 DEFAULT_BATCH_TOP_K = 1000
 MAX_SAFE_TOP_K = 10000
 
@@ -758,82 +796,235 @@ def create_document_building_filter(building_name: str) -> Dict[str, Any]:
     }
 
 
+def flatten_request_metrics(metrics: dict) -> dict[str, dict[str, int]]:
+    """
+    Convert:
+       category -> priority -> status -> count
+    into:
+       category -> status -> count
+    Summing across priorities.
+    """
+    flat = {}
+    for cat, priorities in metrics.items():
+        if not isinstance(priorities, dict):
+            continue
+        for priority, statuses in priorities.items():
+            if not isinstance(statuses, dict):
+                continue
+            for status, count in statuses.items():
+                if not isinstance(count, int):
+                    continue
+                flat.setdefault(cat, {})
+                flat[cat][status] = flat[cat].get(status, 0) + count
+    return flat
+
+
 def _filter_maintenance_buildings(
     matches: list[dict],
     building: str | None,
     category: str | None,
+    priority: str | None,
     status: str | None,
 ) -> list[dict]:
     """
-    Filter building-level maintenance vectors by metadata.
-    Ensures maintenance_metrics is parsed correctly even if stored as string.
-    Always returns a list to satisfy static checkers and prevent None leaks.
+    Filter building-level maintenance vectors by:
+      • building name
+      • category
+      • priority (P1-P6, PPM, Other)
+      • status (open, complete, in progress, etc.)
+
+    Supports:
+      • 3-layer request metrics: category -> priority -> status -> count
+      • 2-layer job metrics:     category -> status -> count
     """
+
     category = category.lower() if category else None
     status = status.lower() if status else None
+    priority_norm = normalise_priority(
+        priority).strip().lower() if priority else None
 
-    filtered = []
+    filtered: list[dict] = []
+
+    # -------------------------------------------------------------
+    # Iterate through all returned building vectors
+    # -------------------------------------------------------------
     for m in matches:
         md = m.get("metadata", {}) or {}
-        metrics = md.get("maintenance_metrics", {})
+        raw_metrics = md.get("maintenance_metrics", {})
 
-        # ✅ Fix: if metrics stored as JSON string, parse it
-        if isinstance(metrics, str):
+        # ---------------------------------------------------------
+        # Parse / normalise metrics safely
+        # ---------------------------------------------------------
+        metrics: dict = {}
+
+        # Metrics sometimes stored as JSON strings
+        if isinstance(raw_metrics, str):
             try:
-                metrics = json.loads(metrics)
+                metrics = json.loads(raw_metrics)
             except Exception:
                 logging.warning(
-                    f"⚠️ Invalid maintenance_metrics format for building {md.get('building_name')}"
+                    f"⚠️ Invalid maintenance_metrics for building "
+                    f"{md.get('canonical_building_name') or md.get('building_name')}"
                 )
                 metrics = {}
-
-        # ✅ Fallback if still not dict
-        if not isinstance(metrics, dict):
+        elif isinstance(raw_metrics, dict):
+            metrics = raw_metrics
+        else:
             metrics = {}
 
-        # Normalise nested metrics
-        metrics_norm = {
-            k.lower(): {ks.lower(): v for ks, v in vv.items()}
-            for k, vv in metrics.items()
-            if isinstance(vv, dict)
-        }
+        # ---------------------------------------------------------
+        # Detect whether this is a 3-layer structure (requests)
+        #    category → priority → status
+        # or a 2-layer structure (jobs)
+        #    category → status
+        # ---------------------------------------------------------
+        has_priority = any(
+            isinstance(layer, dict)
+            and any(isinstance(sub, dict) for sub in layer.values())
+            for layer in metrics.values()
+        )
 
-        # Resolve building name
+        # ---------------------------------------------------------
+        # Normalise to lowercase and ensure all counts are ints
+        # ---------------------------------------------------------
+        if has_priority:
+            # Requests
+            metrics_norm = {
+                cat.lower(): {
+                    prio.lower(): {
+                        stat.lower(): c
+                        for stat, c in status_map.items()
+                        if isinstance(c, int)
+                    }
+                    for prio, status_map in prio_map.items()
+                    if isinstance(status_map, dict)
+                }
+                for cat, prio_map in metrics.items()
+                if isinstance(prio_map, dict)
+            }
+        else:
+            # Jobs
+            metrics_norm = {
+                cat.lower(): {
+                    stat.lower(): c
+                    for stat, c in status_map.items()
+                    if isinstance(c, int)
+                }
+                for cat, status_map in metrics.items()
+                if isinstance(status_map, dict)
+            }
+
+        # ---------------------------------------------------------
+        # Building filter
+        # ---------------------------------------------------------
         bname = (
             md.get("canonical_building_name")
             or md.get("building_name")
             or ""
         )
 
-        # ✅ Building filter
         if building and building.lower() not in bname.lower():
             continue
 
-        # ✅ Category filter
+        # ---------------------------------------------------------
+        # Category filter
+        # ---------------------------------------------------------
         if category and category not in metrics_norm:
             continue
 
-        # ✅ Status filter
-        if status:
+        # ---------------------------------------------------------
+        # Priority filter (only applies to requests)
+        # ---------------------------------------------------------
+        if priority_norm and has_priority:
             if category:
-                count = metrics_norm.get(category, {}).get(status, 0)
+                if priority_norm not in metrics_norm.get(category, {}):
+                    continue
             else:
-                count = sum(v.get(status, 0) for v in metrics_norm.values())
+                # Search across all categories
+                if not any(
+                    priority_norm in prio_map
+                    for prio_map in metrics_norm.values()
+                ):
+                    continue
 
-            if count <= 0:
+        # ---------------------------------------------------------
+        # Status filter — fully corrected logic
+        # ---------------------------------------------------------
+        if status:
+            count_int = 0
+
+            # -----------------------------------------------------
+            # Category specified
+            # -----------------------------------------------------
+            if category:
+                cat_data = metrics_norm.get(category, {})
+
+                if has_priority:
+                    # Requests: sum contributions from all priorities
+                    vals: list[int] = []
+                    if isinstance(cat_data, dict):
+                        for prio_data in cat_data.values():
+                            if isinstance(prio_data, dict):
+                                vals.append(int(prio_data.get(status, 0)))
+                    count_int = sum(vals)
+
+                else:
+                    # Jobs: cat → status
+                    if isinstance(cat_data, dict):
+                        val = cat_data.get(status, 0)
+                        if isinstance(val, int):
+                            count_int = val
+                        elif isinstance(val, dict):
+                            # Rare but safe: sum nested dict of ints
+                            count_int = sum(
+                                v for v in val.values() if isinstance(v, int))
+
+            # -----------------------------------------------------
+            # No category specified → search all categories
+            # -----------------------------------------------------
+            else:
+                if has_priority:
+                    # Flatten priority layer across all categories
+                    flat = flatten_request_metrics(metrics_norm)
+                    vals: list[int] = []
+                    for stats in flat.values():
+                        if isinstance(stats, dict):
+                            vals.append(int(stats.get(status, 0)))
+                    count_int = sum(vals)
+
+                else:
+                    # Jobs: categories → statuses
+                    vals: list[int] = []
+                    for cat_map in metrics_norm.values():
+                        if isinstance(cat_map, dict):
+                            val = cat_map.get(status, 0)
+                            if isinstance(val, int):
+                                vals.append(val)
+                            elif isinstance(val, dict):
+                                vals.append(
+                                    sum(v for v in val.values() if isinstance(v, int)))
+                    count_int = sum(vals)
+
+            # Skip buildings with zero total for this status
+            if count_int <= 0:
                 continue
 
+        # ---------------------------------------------------------
+        # Passed all filters
+        # ---------------------------------------------------------
         filtered.append(m)
 
-    # ✅ Always return list, never None
-    return filtered or []
+    return filtered
 
 # -----------------------------------------------------------------------------
 # Maintenance Query Logic
 # -----------------------------------------------------------------------------
 
 
-def generate_maintenance_answer(query: str) -> Optional[str]:
+def generate_maintenance_answer(
+    query: str,
+    building_override: str | None = None,
+) -> Optional[str]:
     """
     Handles maintenance queries using building-level vectors in Pinecone.
     Filters on metadata, then delegates formatting to maintenance_utils.
@@ -859,8 +1050,16 @@ def generate_maintenance_answer(query: str) -> Optional[str]:
 
     building = parsed.get("building_name")
     category = parsed.get("category")
+    priority = parsed.get("priority")
     status = parsed.get("status")
     query_type = parsed.get("query_type") or "requests"
+
+    # 🔁 NEW: allow context-provided building to override missing one
+    if (not building) and building_override:
+        logging.info(
+            f"🧠 Using building from context override: {building_override}"
+        )
+        building = building_override
 
     logging.info(f"\n🔧 MAINTENANCE QUERY ANALYSIS")
     logging.info(f"  Query: {query}")
@@ -901,7 +1100,7 @@ def generate_maintenance_answer(query: str) -> Optional[str]:
 
     # --- Filter by building/category/status ---
     filtered = _filter_maintenance_buildings(
-        matches, building, category, status)
+        matches, building, category, priority, status)
     logging.info(f"Filtered matches: {len(filtered)}")
     if not filtered:
         return "No buildings match that maintenance query."
@@ -923,14 +1122,22 @@ def generate_maintenance_answer(query: str) -> Optional[str]:
         if not isinstance(metrics, dict):
             continue
 
-        # collapse categories -> statuses
-        status_totals: Dict[str, int] = {}
-        for cat_stats in metrics.values():
-            if isinstance(cat_stats, dict):
-                for s, c in cat_stats.items():
-                    if isinstance(c, int):
-                        k = (s or "").lower()
-                        status_totals[k] = status_totals.get(k, 0) + c
+        # Detect 3-level (requests) vs 2-level (jobs)
+        has_priority = any(isinstance(v, dict) and
+                           any(isinstance(subv, dict) for subv in v.values())
+                           for v in metrics.values())
+
+        if has_priority:
+            collapsed = flatten_request_metrics(metrics)
+        else:
+            collapsed = metrics  # already: category -> status -> count
+
+        status_totals = {}
+        for cat, statuses in collapsed.items():
+            for s, c in statuses.items():
+                if isinstance(c, int):
+                    s_norm = s.lower()
+                    status_totals[s_norm] = status_totals.get(s_norm, 0) + c
 
         # merge by taking max per status to avoid double-counting same totals
         if bname not in building_status_map:
@@ -1016,7 +1223,7 @@ def generate_ranking_answer(query: str) -> Optional[str]:
     top_match = re.search(r'top\s+(\d+)', q)
     if top_match:
         limit = int(top_match.group(1))
-    elif 'all' not in q:
+    elif not re.search(r"\ball\s+buildings?\b", q):
         limit = 10  # default limit to avoid dumping all buildings
     logging.info("   Parsed parameters - area_type='%s', order='%s', limit=%s",
                  area_type, order, limit)

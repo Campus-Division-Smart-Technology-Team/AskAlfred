@@ -1,4 +1,4 @@
-# nlp_intent_classifier_refactored.py
+# nlp_intent_classifier.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """

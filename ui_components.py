@@ -8,6 +8,7 @@ Enhanced with building cache status display.
 import streamlit as st
 from config import TARGET_INDEXES, SEARCH_ALL_NAMESPACES, DEFAULT_NAMESPACE, MIN_SCORE_THRESHOLD
 from building_utils import get_building_names_from_cache, get_cache_status
+from emojis import EMOJI_GORILLA
 
 
 def setup_page_config():
@@ -100,7 +101,7 @@ def render_tabs():
     with tab1:
         st.write(
             """
-            #### Hi, I'm Alfred! 👋  
+            #### Hi, I'm Alfred! 👋
             You can ask me questions about the following topics: 
             - 🏢 Building Management Systems (BMS)  
             - 🔥 Fire Risk Assessments (FRAs) and
@@ -170,10 +171,10 @@ def render_tabs():
                 - How do the AHUs in Indoor Sports Hall behave?
                 - How does the Mitsubishi AC controller integrate with the Trend IQ4 BMS?
 
-                **Counting queries:**
-                - How many buildings are derelict?
+                **Other queries:**
+                - Which buildings are derelict?
                 - Which buildings have fras?
-                - Which buildings have pending maintenance jobs?
+                - How many maintenance requests have been raised at senate house?
                 
                 """
             )
@@ -302,10 +303,21 @@ def initialise_chat_history():
                 "content": "Hello! I'm Alfred 🦍, your helpful assistant at the University of Bristol. I can help you find information about BMS description of operations documents, FRAs and maintenance requests and jobs across the UoB estate. What would you like to know?"
             }
         ]
+    # # Add processing flag
+    # if "processing_query" not in st.session_state:
+    #     st.session_state.processing_query = False
 
 
 def display_chat_history():
     """Display all chat messages from history."""
+    # Get all messages (make a copy to avoid mutation issues)
+    # messages_to_display = st.session_state.messages.copy()
+
+    # if st.session_state.get("processing_query", False):
+    #     # If processing, exclude the last assistant message to prevent duplication
+    #     if messages_to_display and messages_to_display[-1]["role"] == "assistant":
+    #         messages_to_display = messages_to_display[:-1]
+
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])

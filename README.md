@@ -103,11 +103,10 @@ Alfred's architecture follows a **modular, layered design**:
 | → `maintenance_handler.py` | Handles maintenance requests, jobs, and categories. |
 | → `property_handler.py` | Handles property condition and derelict building queries. |
 | → `ranking_handler.py` | Handles "largest/smallest/top" building queries. |
-| → `semantic_search_handler.py` | Fallback search handler for all remaining queries using federated semantic search. |
+| → `semantic_search_handler.py` | Fallback search handler for all remaining queries using Pinecone semantic vector retrieval + OpenAI summarisation. |
 | **`search_core` package** | Unified structured + semantic retrieval engine |
 | → `search_router.py` | Unified entry point for structured and semantic searches. |
 | → `search_instructions.py` | Defines `SearchInstructions` dataclass to pass structured search intent. |
-| → `semantic_search.py` | Runs Pinecone semantic vector retrieval + OpenAI summarisation. |
 | → `planon_search.py` | Handles property and Planon-related structured queries. |
 | → `maintenance_search.py` | Handles structured maintenance vector lookups. |
 | → `search_utils.py` | Core utilities for boosting, deduplication, and building filters. |
@@ -141,7 +140,7 @@ Example:
 
 ## 🧱 search_core Layer
 
-The new `search_core` package provides a **unified structured + semantic retrieval system**.
+The `search_core` package provides a **unified structured + semantic retrieval system**.
 
 ### 🔍 `SearchInstructions`
 ```python
@@ -170,7 +169,7 @@ results, answer, pub_date, score_flag = execute(SearchInstructions(
 
 ## 🗝️ Building Cache & Matching
 
-`building_utils.py` now serves as the single source of truth for:
+`building_utils.py` serves as the single source of truth for:
 
 - Alias and canonical name mapping  
 - Multi-index cache population  
@@ -186,7 +185,8 @@ Building cache initialisation runs at app startup, ensuring that all fuzzy and a
 
 - **NLP Intent Classification**: Hugging Face SentenceTransformers with context-aware biasing
 - **Modular Handlers**: Each query type handled by a specialised module  
-- **Unified Router**: `search_core` dispatches structured vs. semantic searches  
+- **Unified Router**: `search_core` dispatches structured vs. semantic searches
+- **Session Manager**: `session_manager` Persists building context for previous user query  
 - **Smart Building Cache**: Fuzzy and alias matching across multiple metadata fields  
 - **OpenAI + Pinecone Integration**: RAG-style search and summarisation  
 - **Logging Pipeline**: Standardised, color-coded INFO logs across all modules  
@@ -269,20 +269,6 @@ The NLPIntentClassifier expects:
 - **Consistency** — All results conform to `QueryResult` schema.
 - **Context Awareness** — Intent classification considers extracted buildings and business terms.
 - **Graceful Degradation** — Falls back to pattern matching if ML model unavailable.
-
----
-
-## 🧱 Migration Notes (from Alfred v1)
-
-| Old Component | Replaced By |
-|----------------|-------------|
-| `search_operations.py` | ❌ Deprecated → split into `search_core/` modules |
-| `query_classifier.py` | ❌ Removed → replaced by `NLPIntentClassifier` |
-| Inline semantic + planon logic | ✅ Now in `search_router.execute()` |
-| `perform_federated_search()` | ✅ Replaced by `SearchInstructions` + unified router |
-| Multiple building filters | ✅ Centralised in `building_utils.py` |
-| One-file design | ✅ Modular, extensible handler framework |
-| Simple keyword matching | ✅ Hugging Face SentenceTransformers with context biasing |
 
 ---
 

@@ -8,7 +8,7 @@ Guidelines
 ---------
 * Always normalise before using a name as a dict key or for matching.
 * Normalisation is **lossy** and intended only for matching/lookup, not display.
-* Keep this file tiny, deterministic, and well‑tested.
+* Keep this file tiny, deterministic, and well-tested.
 """
 from __future__ import annotations
 

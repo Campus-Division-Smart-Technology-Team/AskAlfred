@@ -229,17 +229,17 @@ class SessionManager:
         if len(state.messages) <= state.max_messages_before_summary:
             return
 
-        # Calculate how many messages to summarize vs keep
+        # Calculate how many messages to summarise vs keep
         keep_recent = state.summary_keep_recent
         total_messages = len(state.messages)
 
         # 1. Robust Validation: Ensure keep_recent is reasonable
         # It must be less than total_messages and non-negative.
         if keep_recent >= total_messages:
-            # Fallback: keep a maximum of 10 messages, but always leave at least one to summarize.
+            # Fallback: keep a maximum of 10 messages, but always leave at least one to summarise.
             keep_recent = max(0, min(10, total_messages - 1))
 
-        # Split messages: old (to summarize) and recent (keep verbatim)
+        # Split messages: old (to summarise) and recent (keep verbatim)
         messages_to_summarise = state.messages[:-keep_recent]
         messages_to_keep = state.messages[-keep_recent:]
 
@@ -398,6 +398,24 @@ class SessionManager:
         """
         with _get_conversation_state() as state:
             return state.last_intent, state.last_intent_confidence
+
+    # Streamlit-specific message tracking
+    @staticmethod
+    def sync_to_streamlit():
+        """Sync internal messages to Streamlit's session_state.messages"""
+        if st is not None:
+            with _get_conversation_state() as state:
+                st.session_state.messages = [
+                    m.to_dict() for m in state.messages]
+
+    @staticmethod
+    def sync_from_streamlit():
+        """Sync Streamlit's messages back to internal state"""
+        if st is not None and "messages" in st.session_state:
+            with _get_conversation_state() as state:
+                state.messages = [
+                    ChatMessage(**msg) for msg in st.session_state.messages
+                ]
 
 # Alternative: More sophisticated approach with importance scoring
 # ================================================================

@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 Main Streamlit application for Alfred the Gorilla chatbot.
-IMPROVED VERSION: Dynamic building cache initialisation across all indexes.
+With dynamic building cache initialisation across all indexes.
 """
 import os
 import logging
 from typing import Dict, List, Any, Optional
+from pathlib import Path
+import zipfile
+import time
 import streamlit as st
 from ui_components import (
     setup_page_config, render_custom_css, render_header, render_tabs,
@@ -17,16 +20,13 @@ from search_core.search_router import execute
 from search_instructions import SearchInstructions
 from building_utils import (
     populate_building_cache_from_multiple_indexes, get_cache_status,
-    extract_building_from_query
+    extract_building_from_query,
 )
 from config import TARGET_INDEXES, DEFAULT_NAMESPACE, USE_QUERY_MANAGER
 from emojis import (EMOJI_BUILDING, EMOJI_FIRE, EMOJI_GORILLA,
                     EMOJI_MAINTENANCE, EMOJI_BOOKS, EMOJI_MEDAL)
 from query_manager import QueryManager
-from pathlib import Path
-import zipfile
-import os
-import time
+
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
@@ -165,6 +165,15 @@ def initialise_building_cache():
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+def should_process_query():
+    """Check if we should process a new query."""
+    return (
+        "last_processed_query" not in st.session_state or
+        st.session_state.get("current_query") != st.session_state.get(
+            "last_processed_query")
+    )
+
+
 def handle_chat_input(top_k: int):
     """Handle new chat input from user."""
     query = st.chat_input(
@@ -186,6 +195,9 @@ def handle_chat_input(top_k: int):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": query})
 
+    # # Set processing flag
+    # st.session_state.processing_query = True
+
     # Display user message
     with st.chat_message("user"):
         st.markdown(query)
@@ -199,11 +211,10 @@ def handle_chat_input(top_k: int):
 
 def handle_query_with_manager(query: str, top_k: int):
     """
-    New query manager path.
     This uses the centralised QueryManager for all routing decisions.
     """
 
-    # ✅ Persist the manager across Streamlit reruns
+    # Persist the manager across Streamlit reruns
     if "manager" not in st.session_state:
         st.session_state.manager = QueryManager()
     manager = st.session_state.manager
@@ -245,6 +256,8 @@ def handle_query_with_manager(query: str, top_k: int):
                     "query_type": result.query_type or "Unknown",
                     "handler_used": result.handler_used or "Unknown"
                 })
+                # # Clear processing flag
+                # st.session_state.processing_query = False
 
                 # Debug info
                 if st.session_state.get('debug_mode', False):
@@ -259,6 +272,7 @@ def handle_query_with_manager(query: str, top_k: int):
 
             except Exception as e:
                 handle_search_error(e)
+                # st.session_state.processing_query = False
 
 
 def validate_query(query: str) -> tuple[bool, Optional[str]]:
@@ -452,6 +466,7 @@ def handle_search_query(query: str, top_k: int):
 
             except Exception as e:
                 handle_search_error(e)
+                # st.session_state.processing_query = False
 
 
 def handle_no_results():

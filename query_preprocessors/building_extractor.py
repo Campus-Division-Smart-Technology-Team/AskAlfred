@@ -4,6 +4,7 @@ from query_preprocessors.base_preprocessor import CachingPreprocessor
 from building_utils import (
     extract_building_from_query,
     get_building_names_from_cache,
+    resolve_building_name_fuzzy,
     BuildingCacheManager
 )
 from building_validation import is_valid_building_name
@@ -28,12 +29,16 @@ class BuildingExtractor(CachingPreprocessor):
         query = context.query
 
         if not BuildingCacheManager.is_populated():
-            self.logger.warning(
-                "Building cache not populated — skipping extraction")
+            BuildingCacheManager.ensure_initialised()
+
+        if not BuildingCacheManager.is_populated():
+            self.logger.error("Building cache failed to initialise")
+            context.add_to_cache("building_detected", False)
             return
 
         known_buildings = get_building_names_from_cache()
         if not known_buildings:
+            context.add_to_cache("building_detected", False)
             return
 
         # AUTHORITATIVE function call

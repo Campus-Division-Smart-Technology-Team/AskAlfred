@@ -53,6 +53,11 @@ class MaintenanceHandler(BaseQueryHandler):
         # Use the precise logic from counting_queries
         return False
 
+    def _as_name(self, building):
+        if not building:
+            return None
+        return getattr(building, "name", None) or str(building)
+
     def handle(self, context: QueryContext) -> QueryResult:
         """Produce structured maintenance information via structured_queries logic."""
         self._log_handling(context)
@@ -61,7 +66,16 @@ class MaintenanceHandler(BaseQueryHandler):
         try:
             from structured_queries import generate_maintenance_answer
 
-            building_override = context.building or context.building_filter
+            prev_building = None
+            previous_context = getattr(context, "previous_context", None)
+            if previous_context:
+                prev_building = previous_context.get("building")
+
+            building_override = (
+                self._as_name(context.building)
+                or context.building_filter
+                or prev_building
+            )
 
             answer = generate_maintenance_answer(
                 query_text, building_override=building_override)

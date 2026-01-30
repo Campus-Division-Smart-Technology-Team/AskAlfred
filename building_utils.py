@@ -324,7 +324,7 @@ def resolve_building_name_fuzzy(raw_name: Optional[str]) -> Optional[str]:
 def create_building_metadata_filter(building_filter: str) -> Optional[Dict[str, Any]]:
     """
     Create comprehensive Pinecone metadata filter for building matching.
-    IMPROVED: Includes fuzzy matching conditions for all metadata fields.
+    Includes fuzzy matching conditions for all metadata fields.
 
     Args:
         building_filter: Building name to filter by
@@ -811,7 +811,7 @@ def extract_building_from_query(
 ) -> Optional[str]:
     """
     Extract building name from user query using multiple strategies.
-    IMPROVED: Works with lowercase input and uses n-gram fallback.
+    Works with lowercase input and uses n-gram fallback.
 
     Args:
         query: User query string (works with lowercase)
@@ -838,43 +838,56 @@ def extract_building_from_query(
         return None
 
     # Reject obvious non-building maintenance keywords early
-    # from maintenance_utils import INVALID_BUILDING_NAMES
     ql = query.lower()
-    query_words = set(ql.split())
+    query_words = set(re.findall(r"[a-z0-9]+(?:'[a-z0-9]+)?", ql))
 
     # Reject queries containing maintenance keywords *only when no building name present*
     if any(word in query_words for word in INVALID_BUILDING_NAMES):
         has_building_words = False
-        for building in (known_buildings or []):
-            building_lower = building.lower().strip()
-            if building_lower in INVALID_BUILDING_NAMES:
-                # 👈 don't let "Maintenance" rescue the query
-                continue
-
-            building_words = [
-                w.lower()
-                for w in building.split()
-                if len(w) > 2
-                and not w.isdigit()
-                and w.replace('-', '').replace('/', '').isalnum()
-            ]
-
-            if len(building_words) >= 2:
-                matches = sum(1 for w in building_words if w in query_words)
-                if matches >= 2:
+        if BuildingCacheManager.is_populated():
+            for alias_lower in _BUILDING_ALIASES_CACHE.keys():
+                if alias_lower in query_words:
                     has_building_words = True
                     logging.debug(
-                        "%s Found building words: %s words from '%s' in query",
-                        EMOJI_TICK, matches, building
+                        "%s Found building alias in query: '%s' -> '%s'",
+                        EMOJI_TICK,
+                        alias_lower,
+                        _BUILDING_ALIASES_CACHE[alias_lower]
                     )
                     break
-            elif len(building_words) == 1 and building_words[0] in query_words:
-                has_building_words = True
-                logging.debug(
-                    "%s Found building word: '%s' from '%s' in query",
-                    EMOJI_TICK, building_words[0], building
-                )
-                break
+        # Check canonical building name words if no alias found
+        if not has_building_words:
+            for building in (known_buildings or []):
+                building_lower = building.lower().strip()
+                if building_lower in INVALID_BUILDING_NAMES:
+                    # 👈 don't let "Maintenance" rescue the query
+                    continue
+
+                building_words = [
+                    w.lower()
+                    for w in building.split()
+                    if len(w) > 2
+                    and not w.isdigit()
+                    and w.replace('-', '').replace('/', '').isalnum()
+                ]
+
+                if len(building_words) >= 2:
+                    matches = sum(
+                        1 for w in building_words if w in query_words)
+                    if matches >= 2:
+                        has_building_words = True
+                        logging.debug(
+                            "%s Found building words: %s words from '%s' in query",
+                            EMOJI_TICK, matches, building
+                        )
+                        break
+                elif len(building_words) == 1 and building_words[0] in query_words:
+                    has_building_words = True
+                    logging.debug(
+                        "%s Found building word: '%s' from '%s' in query",
+                        EMOJI_TICK, building_words[0], building
+                    )
+                    break
 
         if not has_building_words:
             logging.debug(

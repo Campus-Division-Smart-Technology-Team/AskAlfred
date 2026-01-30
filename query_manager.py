@@ -205,7 +205,7 @@ class QueryManager:
         # 5️⃣ Ultra-short continuation ("more", "next", "continue")
         if len(tokens) <= 2 and prev_context:
             return True
-            # 6️⃣ ML uncertainty + previous intent → assume follow-up
+        # 6️⃣ ML uncertainty + previous intent → assume follow-up
         if (
             previous_intent
             and prev_context
@@ -295,7 +295,7 @@ class QueryManager:
         prev_context_dict = SessionManager.get_last_query_context()
         prev_intent, prev_conf = SessionManager.get_last_intent()
 
-        # New Defensive Logging
+        # Defensive Logging
         if prev_context_dict:
             self.logger.info(
                 f"MEMORY LOADED: Previous building: {prev_context_dict.get('building')!r}"
@@ -319,7 +319,28 @@ class QueryManager:
                 f"previous_intent={prev_intent}, conf={prev_conf}"
             )
 
-        # Cache check
+        # ---------------------------------------------------
+        # Preprocessors
+        # ---------------------------------------------------
+        self._run_preprocessors(context)
+        # 🔧 Normalise / clean building extracted by preprocessors
+        if context.building and context.building.lower() in INVALID_BUILDING_NAMES:
+            self.logger.info(
+                "⚠️ Discarding invalid building from preprocessors: %r",
+                context.building,
+            )
+            context.building = None
+            context.building_filter = None
+            context.routing_notes.append("invalid_building_cleared")
+
+        self._maybe_inherit_followup_context(context)
+
+        if context.building and not context.building_filter:
+            context.building_filter = context.building
+            context.routing_notes.append("synchronised_building_filter")
+
+        # Cache check (must happen *after* preprocessors + follow-up inheritance,
+        # so the cache key includes the correct building scope)
         cache_key = self._make_cache_key(context)
         if self.cache_enabled and cache_key in self.cache:
             self.stats["cached_queries"] += 1
@@ -344,26 +365,6 @@ class QueryManager:
 
             result.processing_time_ms = elapsed_ms
             return result
-
-        # ---------------------------------------------------
-        # Preprocessors
-        # ---------------------------------------------------
-        self._run_preprocessors(context)
-        # 🔧 Normalise / clean building extracted by preprocessors
-        if context.building and context.building.lower() in INVALID_BUILDING_NAMES:
-            self.logger.info(
-                "⚠️ Discarding invalid building from preprocessors: %r",
-                context.building,
-            )
-            context.building = None
-            context.building_filter = None
-            context.routing_notes.append("invalid_building_cleared")
-
-        self._maybe_inherit_followup_context(context)
-
-        if context.building and not context.building_filter:
-            context.building_filter = context.building
-            context.routing_notes.append("synchronised_building_filter")
 
         self.logger.warning(f"FINAL QUERY BEFORE ROUTING: {context.query!r}")
 

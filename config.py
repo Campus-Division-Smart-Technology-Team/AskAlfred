@@ -135,13 +135,11 @@ def resolve_namespace(doc_type: Optional[str]) -> Optional[str]:
 
 TARGET_INDEXES = ["local-docs"]
 SEARCH_ALL_NAMESPACES = True
-
 DEFAULT_EMBED_MODEL = os.getenv(
     "DEFAULT_EMBED_MODEL", "text-embedding-3-small")
 ANSWER_MODEL = os.getenv("ANSWER_MODEL", "gpt-4o-mini")
 DIMENSION = 1536
 MIN_SCORE_THRESHOLD = 0.3
-
 INDEX_CONFIGS = {
     "local-docs": {"model": DEFAULT_EMBED_MODEL, "dimension": DIMENSION}
 }
@@ -160,6 +158,15 @@ def get_index_config(index_name: str) -> IndexConfig:
             dimension=config.get("dimension", DIMENSION),
         )
     return IndexConfig(model=DEFAULT_EMBED_MODEL, dimension=DIMENSION)
+
+
+class DocumentTypes:
+    MAINTENANCE_REQUEST = "maintenance_request"
+    MAINTENANCE_JOB = "maintenance_job"
+    FIRE_RISK_ASSESSMENT = "fire_risk_assessment"
+    OPERATIONAL_DOC = "operational_doc"
+    PLANON_DATA = "planon_data"
+    UNKNOWN = "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +201,7 @@ class BatchIngestConfig:
     ext_whitelist: Set[str] = field(
         default_factory=lambda: {"txt", "md", "csv", "json", "pdf", "docx"}
     )
+    dry_run: bool = False
 
     cache_dir: str = ".cache/vector_ids"
     cache_ttl_seconds: int = 3600
@@ -201,6 +209,7 @@ class BatchIngestConfig:
 
     export_events: bool = False
     export_events_file: str = "building_events.jsonl"
+    MAX_METADATA_TEXT_TOKENS = 800
 
     # -----------------------------------------------------------------------
     # ENVIRONMENT LOADERS
@@ -240,6 +249,8 @@ class BatchIngestConfig:
                 "EXPORT_EVENTS", "false").lower() in ("1", "true", "yes"),
             export_events_file=os.getenv(
                 "EXPORT_EVENTS_FILE", defaults.export_events_file),
+            dry_run=os.getenv("DRY_RUN", "false").lower() in (
+                "1", "true", "yes"),
         )
 
     # -----------------------------------------------------------------------
@@ -261,10 +272,10 @@ class BatchIngestConfig:
             raise ValueError("max_workers must be >= 1")
 
         if self.embed_batch < 1 or self.embed_batch > 2048:
-            raise ValueError("embed_batch out of range (1–2048)")
+            raise ValueError("embed_batch out of range (1-2048)")
 
         if self.upsert_batch < 1 or self.upsert_batch > 1000:
-            raise ValueError("upsert_batch out of range (1–1000)")
+            raise ValueError("upsert_batch out of range (1-1000)")
 
         path = Path(self.local_path)
         if not path.exists():
@@ -272,6 +283,9 @@ class BatchIngestConfig:
         if not path.is_dir():
             raise ValueError(
                 f"local_path is not a directory: {self.local_path}")
+        if getattr(self, "dry_run", False):
+            # Dry-run must not depend on Pinecone state (listing/upserting)
+            self.skip_existing = False
 
         cache_dir = Path(self.cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)

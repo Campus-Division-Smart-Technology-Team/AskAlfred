@@ -19,7 +19,7 @@ class BaseQueryHandler(ABC):
 
     def __init__(self):
         self.query_type = None
-        self.priority = 0  # Lower = higher priority
+        self.priority = 0  # Lower to higher priority
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = True

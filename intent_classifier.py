@@ -16,8 +16,8 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 import logging
 import os
+import json
 import time
-import pickle
 from pathlib import Path
 import numpy as np
 from query_types import QueryType
@@ -165,6 +165,103 @@ class NLPIntentClassifier:
     # INITIALISATION / CACHE
     # ------------------------------------------------------------------
 
+    def _save_cache_secure(self):
+        """Save embeddings without pickle - uses JSON + npz."""
+        try:
+            cache_base = Path(self.cache_path).with_suffix('')
+            json_path = cache_base.with_suffix('.json')
+            npz_path = cache_base.with_suffix('.npz')
+
+            # Prepare metadata (no numpy arrays, no enums)
+            metadata = {
+                'model_name': self.model_name,
+                'intents': {}
+            }
+
+            # Prepare embeddings for npz
+            embeddings_dict = {}
+
+            for intent, data in self.intent_embeddings.items():
+                intent_str = intent.value  # Convert enum to string
+
+                # Store metadata in JSON
+                metadata['intents'][intent_str] = {
+                    'examples': data.get('examples', [])
+                }
+
+                # Store numpy arrays in npz
+                embeddings_dict[f"{intent_str}_mean"] = data['mean']
+                embeddings_dict[f"{intent_str}_embeddings"] = data['embeddings']
+
+            # Save JSON metadata
+            with open(json_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            # Save numpy embeddings (compressed)
+            np.savez_compressed(npz_path, **embeddings_dict)
+
+            self.logger.info(
+                f"Cached embeddings saved securely to {json_path} and {npz_path}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to save cache: {e}")
+
+    def _load_cache_secure(self):
+        """Load embeddings without pickle - uses JSON + npz."""
+        cache_base = Path(self.cache_path).with_suffix('')
+        json_path = cache_base.with_suffix('.json')
+        npz_path = cache_base.with_suffix('.npz')
+
+        if not (json_path.exists() and npz_path.exists()):
+            return False
+
+        try:
+            # Load metadata
+            with open(json_path, 'r') as f:
+                metadata = json.load(f)
+
+            # Verify model compatibility
+            if metadata.get('model_name') != self.model_name:
+                self.logger.warning("Cache model mismatch")
+                return False
+
+            # Load embeddings
+            with np.load(npz_path) as npz_data:
+                for intent_str, intent_meta in metadata['intents'].items():
+                    from query_types import QueryType
+                    intent = QueryType(intent_str)
+
+                    mean_key = f"{intent_str}_mean"
+                    emb_key = f"{intent_str}_embeddings"
+
+                    if mean_key not in npz_data or emb_key not in npz_data:
+                        self.logger.warning(f"Missing data for {intent_str}")
+                        return False
+
+                    self.intent_embeddings[intent] = {
+                        'mean': npz_data[mean_key],
+                        'examples': intent_meta['examples'],
+                        'embeddings': npz_data[emb_key]
+                    }
+
+            # Validate dimensions
+            if self.intent_embeddings:
+                sample_intent = next(iter(self.intent_embeddings))
+                mean = self.intent_embeddings[sample_intent]['mean']
+
+                if self.model is not None:
+                    expected_dim = self.model.get_sentence_embedding_dimension()
+                    if mean.shape[0] != expected_dim:
+                        self.logger.warning("Cache dimension mismatch")
+                        return False
+
+            self.logger.info("Loaded cached intent embeddings securely")
+            return True
+
+        except Exception as e:
+            self.logger.warning(f"Cache load failed: {e}")
+            return False
+
     def _load_or_init_model(self):
         # -----------------------------------------------------
         # Step 1: AUTO-UNZIP local model if only the .zip exists
@@ -221,43 +318,30 @@ class NLPIntentClassifier:
             )
 
         # -----------------------------------------------------
-        # Step 4: Load or generate intent embeddings cache
+        # Step 4: Load or generate intent embeddings
         # -----------------------------------------------------
         t_cache = time.time()
-        if os.path.exists(self.cache_path):
-            try:
-                with open(self.cache_path, "rb") as f:
-                    cache = pickle.load(f)
 
-                if (cache.get("model_name") == self.model_name
-                        and "embeddings" in cache):
-                    emb = next(iter(cache["embeddings"].values()))
-                    if self.model is None:
-                        raise RuntimeError("Model is not initialised")
-                    model_dim = self.model.get_sentence_embedding_dimension()
+        # Try to load from secure cache
+        cache_loaded = self._load_cache_secure()
 
-                    mean = np.asarray(emb["mean"])
-                    if mean.ndim == 1 and mean.shape[0] == model_dim:
-                        self.intent_embeddings = cache["embeddings"]
-                        self.logger.info("Loaded cached intent embeddings.")
-                        self.logger.info(
-                            "⏱ Intent embeddings (load) took %.2f s",
-                            time.time() - t_cache,
-                        )
-                        return
-
-            except Exception as e:
-                self.logger.warning("Cache load failed: %s", e)
-
-        # No valid cache -> generate and save
-        self._generate_embeddings()
-        self._save_cache()
-        self.logger.info(
-            "⏱ Intent embeddings (generate) took %.2f s",
-            time.time() - t_cache,
-        )
+        if cache_loaded:
+            self.logger.info(
+                "⏱ Intent embeddings (loaded from cache) took %.2f s",
+                time.time() - t_cache,
+            )
+        else:
+            # No valid cache -> generate and save
+            self.logger.info("No valid cache found, generating embeddings...")
+            self._generate_embeddings()
+            self._save_cache_secure()
+            self.logger.info(
+                "⏱ Intent embeddings (generated) took %.2f s",
+                time.time() - t_cache,
+            )
 
     def _generate_embeddings(self):
+        """Generate embeddings for all intent examples."""
         # Ensure the SentenceTransformer model is initialised before encoding.
         if self.model is None:
             if not SENTENCE_TRANSFORMERS_AVAILABLE or _SentenceTransformerRuntime is None:
@@ -266,8 +350,7 @@ class NLPIntentClassifier:
                     "Install sentence-transformers or run in pattern-only mode."
                 )
             # Lazily initialise the model if it wasn't created earlier.
-            if self.model is None:
-                self.model = SentenceTransformer(self.model_name)
+            self.model = SentenceTransformer(self.model_name)
 
         self.logger.info("Generating new intent embeddings...")
         for intent, examples in INTENT_EXAMPLES.items():
@@ -277,18 +360,8 @@ class NLPIntentClassifier:
                 "examples": examples,
                 "embeddings": vecs,
             }
-
-    def _save_cache(self):
-        try:
-            with open(self.cache_path, "wb") as f:
-                pickle.dump(
-                    {"model_name": self.model_name,
-                        "embeddings": self.intent_embeddings},
-                    f,
-                )
-            self.logger.info("Cached embeddings saved.")
-        except Exception as e:
-            self.logger.warning("Failed to save cache: %s", e)
+        self.logger.info(
+            f"Generated embeddings for {len(self.intent_embeddings)} intents")
 
     # ------------------------------------------------------------------
     # INTENT CLASSIFICATION

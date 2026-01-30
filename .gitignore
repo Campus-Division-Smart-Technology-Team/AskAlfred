@@ -16,10 +16,12 @@ __pycache__/
 *.bin
 *.json
 *.pklz
+*.jsonl
 
 # embeddings + models
 intent_embeddings_cache.pkl
 *.npy
+*.npz
 models/
 models/*.zip
 models/all-MiniLM-L6-v2/**
@@ -29,4 +31,5 @@ models/all-MiniLM-L6-v2/**
 buildings_cache.json
 planon_data_*.json
 Alfred/
+*.csv
 

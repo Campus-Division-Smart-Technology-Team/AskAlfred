@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Enhanced Batch Ingest for AskAlfred - IMPROVED VERSION
+Batch Ingest for AskAlfred
 
 Improvements over original:
 1. Thread-safe statistics and caching
@@ -9,6 +9,9 @@ Improvements over original:
 4. Better error handling and metadata validation
 5. Progress tracking
 6. Namespace separation (preserved from original)
+7. Path traversal vulnerability fix
+8. Progress bar for sequential processing
+9. Enhanced file size validation
 
 All existing functionality preserved and backward compatible.
 """
@@ -21,36 +24,38 @@ import time
 import random
 import argparse
 import logging
-from typing import List, Dict, Tuple, Set, Optional, Any
-from datetime import datetime
-from difflib import get_close_matches
+from typing import Any
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 import pandas as pd
-import tiktoken
 from dotenv import load_dotenv
 
-from pinecone import Pinecone, ServerlessSpec
-from openai import OpenAI
 from openai import APIError, RateLimitError
 
 # Import utilities
-from config import BatchIngestConfig, DEFAULT_NAMESPACE, resolve_namespace
+from ingest_context import IngestContext
+from config import (BatchIngestConfig, DocumentTypes, resolve_namespace,
+                    NAMESPACE_MAPPINGS,)
 from ingest_utils import (
-    ThreadSafeStats,
-    ThreadSafeCache,
-    VectorIDCache,
     MetadataValidator,
     ThreadSafeVectorBuffer,
     validate_namespace_routing,
     upsert_vectors,
+    validate_safe_path,
+    list_local_files_secure,
+    IngestionProgressTracker,
+    enrich_with_building_metadata,
+    truncate_by_tokens,
 )
-# NEW centralised building logic
+# Centralised building logic
 from building_normaliser import normalise_building_name
 from filename_building_parser import get_building_with_confidence, should_flag_for_review
+
+from maintenance_utils import normalise_priority
 
 
 # ============================================================================
@@ -75,7 +80,7 @@ def parse_pivot_header(col_str: str, is_requests: bool) -> dict:
 
     Requests examples:
         "Asbestos Requests - Other - In progress"
-        "ASU Requests - RM Priority 1 - Complete"
+        "ASU Requests - RM Priority 1 - Within 1 week - Complete"
         → {category, priority, status}
 
     Jobs examples:
@@ -90,16 +95,19 @@ def parse_pivot_header(col_str: str, is_requests: bool) -> dict:
     keyword = "Requests" if is_requests else "Jobs"
     cleaned = col_str.replace(keyword, "").strip()
 
-    parts = [p.strip() for p in cleaned.split("-") if p.strip()]
+    parts = [p.strip() for p in re.split(r"\s*-\s*", cleaned) if p.strip()]
 
     if is_requests:
         # Expect: category / priority / status
         if len(parts) == 1:
             return {"category": parts[0], "priority": "Unknown", "status": "Unknown"}
         elif len(parts) == 2:
-            return {"category": parts[0], "priority": parts[1], "status": "Unknown"}
-        else:
-            return {"category": parts[0], "priority": parts[1], "status": parts[2]}
+            return {"category": parts[0], "priority": "Unknown", "status": parts[1]}
+        return {
+            "category": parts[0],
+            "priority": " - ".join(parts[1:-1]),   # <-- swallow middle tokens
+            "status": parts[-1],
+        }
 
     else:
         # Jobs only have: category / status
@@ -109,145 +117,28 @@ def parse_pivot_header(col_str: str, is_requests: bool) -> dict:
             return {"category": parts[0], "status": parts[1]}
 
 
+def load_tabular_data(key: str, data: bytes) -> pd.DataFrame:
+    """
+    Load CSV or Excel data into a DataFrame based on file extension.
+    """
+    ext_ = ext(key)
+
+    if ext_ == "csv":
+        return pd.read_csv(io.BytesIO(data))
+
+    if ext_ in ("xlsx", "xls"):
+        return pd.read_excel(io.BytesIO(data))
+
+    raise ValueError(f"Unsupported tabular file type: {ext_}")
+
+
 # ---------------- Environment & Setup ----------------
 load_dotenv()
 
 # ============================================================================
-# NAMESPACE CONFIGURATION
-# ============================================================================
-
-
-def get_namespace_for_file(key: str) -> Optional[str]:
-    """
-    Determine the appropriate namespace based on filename.
-
-    Args:
-        key: File path/name
-
-    Returns:
-        Namespace string or None for default namespace
-    """
-    key_lower = key.lower()
-
-    # Check for maintenance files
-    if "maintenance_requests" in key_lower or "maintenance requests" in key_lower:
-        logging.debug("Routing %s to maintenance_requests namespace", key)
-        return "maintenance_requests"
-    elif "maintenance_jobs" in key_lower or "maintenance jobs" in key_lower or "maintenance-jobs" in key_lower:
-        logging.debug("Routing %s to maintenance_jobs namespace", key)
-        return "maintenance_jobs"
-    elif "dim-property" in key_lower or ("property" in key_lower and key_lower.endswith(".csv")):
-        # Only CSV property files go to planon_data namespace
-        # PDF/DOCX property documents stay in default namespace
-        logging.debug("Routing %s to planon_data namespace", key)
-        return "planon_data"
-
-    logging.debug("Routing %s to default namespace (operational docs)", key)
-    return None
-
-
-# ============================================================================
-# INGESTION CONTEXT
-# ============================================================================
-
-class IngestContext:
-    """
-    Container for all ingestion dependencies.
-    Provides dependency injection for cleaner, testable code.
-    """
-
-    def __init__(self, config: BatchIngestConfig):
-        """
-        Initialise ingestion context.
-
-        Args:
-            config: Ingestion configuration
-        """
-        self.config = config
-
-        # Initialise API clients (lazy loading)
-        self._pinecone = None
-        self._openai = None
-        self._index = None
-        self._encoder = None
-
-        # Thread-safe utilities
-        self.stats = ThreadSafeStats()
-        self.cache = ThreadSafeCache()
-        self.vector_id_cache = VectorIDCache(
-            config.cache_dir,
-            config.cache_ttl_seconds
-        )
-
-        # Setup logging
-        logging.basicConfig(
-            level=config.log_level,
-            format="%(asctime)s %(levelname)s %(message)s",
-        )
-
-    @property
-    def pinecone(self) -> Pinecone:
-        """Get Pinecone client (lazy init)."""
-        if self._pinecone is None:
-            self._pinecone = Pinecone(api_key=self.config.pinecone_api_key)
-        return self._pinecone
-
-    @property
-    def openai(self) -> OpenAI:
-        """Get OpenAI client (lazy init)."""
-        if self._openai is None:
-            self._openai = OpenAI(api_key=self.config.openai_api_key)
-        return self._openai
-
-    @property
-    def index(self):
-        """Get Pinecone index (lazy init)."""
-        if self._index is None:
-            # Ensure index exists
-            self._ensure_index_exists()
-            self._index = self.pinecone.Index(self.config.index_name)
-        return self._index
-
-    @property
-    def encoder(self):
-        """Get tiktoken encoder (lazy init)."""
-        if self._encoder is None:
-            self._encoder = tiktoken.get_encoding("cl100k_base")
-        return self._encoder
-
-    def _ensure_index_exists(self) -> None:
-        """Ensure Pinecone index exists, create if needed."""
-        existing = {i["name"] for i in self.pinecone.list_indexes()}
-
-        if self.config.index_name not in existing:
-            logging.info(
-                "Creating Pinecone index '%s' (dim=%d)...",
-                self.config.index_name,
-                self.config.dimension
-            )
-            self.pinecone.create_index(
-                name=self.config.index_name,
-                dimension=self.config.dimension,
-                metric="cosine",
-                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-            )
-        else:
-            # Validate dimension matches
-            index_info = self.pinecone.describe_index(self.config.index_name)
-            if index_info.dimension != self.config.dimension:
-                raise RuntimeError(
-                    f"Index dimension mismatch: {index_info.dimension} != {self.config.dimension}"
-                )
-            logging.info(
-                "Using existing index '%s' (dim=%d)",
-                self.config.index_name,
-                self.config.dimension
-            )
-
-
-# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
 
 def backoff_sleep(attempt: int, base: float = 0.5, cap: float = 10.0) -> None:
     """Exponential backoff with jitter."""
@@ -260,46 +151,32 @@ def ext(key: str) -> str:
     return key.rsplit(".", 1)[-1].lower() if "." in key else ""
 
 
-def fetch_bytes(base_path: str, key: str) -> bytes:
-    """Read file from local filesystem."""
-    filepath = Path(base_path) / key
+def fetch_bytes_secure(base_path: str, key: str, max_size_mb: float = 100) -> bytes:
+    """
+    Securely read file from local filesystem with size validation.
+
+    Args:
+        base_path: Base directory path
+        key: Relative file path
+        max_size_mb: Maximum allowed file size in MB (pre-read check)
+
+    Returns:
+        File contents as bytes
+
+    Raises:
+        ValueError: If file is too large or path is unsafe
+    """
+    filepath = validate_safe_path(base_path, key)
+
+    # Check file size BEFORE reading into memory
+    size_mb = filepath.stat().st_size / (1024 * 1024)
+    if max_size_mb > 0 and size_mb > max_size_mb:
+        raise ValueError(
+            f"File too large: {size_mb:.2f}MB exceeds limit of {max_size_mb}MB"
+        )
+
     with open(filepath, "rb") as f:
         return f.read()
-
-
-def list_local_files(base_path: str, ext_whitelist: set[str]) -> list[dict[str, Any]]:
-    """
-    List all files in a local directory recursively, filtered by extension.
-    Returns list of dicts similar to S3 object format for compatibility.
-    """
-    base_path_obj = Path(base_path)
-
-    if not base_path_obj.exists():
-        raise FileNotFoundError(f"Directory not found: {base_path}")
-
-    if not base_path_obj.is_dir():
-        raise NotADirectoryError(f"Not a directory: {base_path}")
-
-    files = []
-    for filepath in base_path_obj.rglob("*"):
-        if not filepath.is_file():
-            continue
-
-        # Check extension whitelist
-        file_ext = filepath.suffix[1:].lower() if filepath.suffix else ""
-        if ext_whitelist and file_ext not in ext_whitelist:
-            continue
-
-        # Create S3-like object dict
-        relative_path = filepath.relative_to(base_path_obj)
-        obj = {
-            "Key": str(relative_path),
-            "Size": filepath.stat().st_size,
-            "LastModified": datetime.fromtimestamp(filepath.stat().st_mtime).isoformat(),
-        }
-        files.append(obj)
-
-    return files
 
 
 def process_document(
@@ -309,7 +186,7 @@ def process_document(
     name_to_canonical: dict[str, str],
     alias_to_canonical: dict[str, str],
     known_buildings: list[str],
-    existing_vector_ids: set[str],
+    existing_file_ids: set[str],
 ) -> list[dict[str, Any]]:
     """
     Process a single file and return a list of Pinecone-ready vectors.
@@ -318,7 +195,7 @@ def process_document(
 
     key = obj["Key"]
     size_mb = obj.get("Size", 0) / (1024 * 1024)
-    ext_ = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+    ext_ = ext(key)
 
     # Skip large files
     if ctx.config.max_file_mb > 0 and size_mb > ctx.config.max_file_mb:
@@ -326,11 +203,16 @@ def process_document(
         ctx.stats.increment("files_skipped")
         return []
 
-    # Skip duplicates if already in index
-    deterministic_id_prefix = hashlib.md5(
-        f"{base_path}:{key}".encode()).hexdigest()
-    if any(deterministic_id_prefix in vid for vid in existing_vector_ids):
-        logging.debug("Skipping already indexed file: %s", key)
+    # 1. Load file data
+    data = fetch_bytes_secure(base_path, key)
+
+    # 1b. Compute content hash (used for IDs + optional metadata)
+    content_hash = hashlib.sha256(data).hexdigest()
+
+    # 1c. Skip duplicates if already in index (content-hash aware)
+    file_id = make_file_id(base_path, key, content_hash)
+    if ctx.config.skip_existing and file_id in existing_file_ids:
+        logging.debug("Skipping already indexed file (hash match): %s", key)
         ctx.stats.increment("files_skipped")
         return []
 
@@ -338,16 +220,12 @@ def process_document(
         # ----------------------------------------------------------
         # 1. Load file data
         # ----------------------------------------------------------
-        data = fetch_bytes(base_path, key)
-        namespace = get_namespace_for_file(key) or DEFAULT_NAMESPACE
-        if not validate_namespace_routing(namespace):
-            raise ValueError(
-                f"Invalid namespace resolution for file {key}: {namespace}")
+        data = fetch_bytes_secure(base_path, key)
 
         # ----------------------------------------------------------
         # 2. Extract text
         # ----------------------------------------------------------
-        if ext_ in ("csv", "xlsx"):
+        if ext_ in ("csv", "xlsx", "xls"):
             if "maintenance" in key.lower():
                 docs = extract_maintenance_csv(key, data, alias_to_canonical)
             else:
@@ -369,26 +247,6 @@ def process_document(
 
             flag_review = should_flag_for_review(confidence, source)
 
-            # ---------------------------------------------------------
-            # Emit structured building assignment event (JSONL)
-            # ---------------------------------------------------------
-            if getattr(ctx.config, "export_events", False):
-                try:
-                    event = {
-                        "file": key,
-                        "canonical_building_name": building,
-                        "confidence": confidence,
-                        "source": source,
-                        "flag_review": flag_review,
-                        "namespace_guess": namespace,
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
-                    }
-                    with open(getattr(ctx.config, "export_events_file"), "a", encoding="utf-8") as f:
-                        f.write(json.dumps(event) + "\n")
-                except Exception as e:
-                    logging.warning(
-                        "Could not write building event for %s: %s", key, e)
-
             building_metadata = {
                 "canonical_building_name": building if building != "Unknown" else None,
                 "building_confidence": confidence,
@@ -405,6 +263,50 @@ def process_document(
                 )
 
             docs = [(key, building, text_sample, building_metadata)]
+        # ----------------------------------------------------------
+        # DRY-RUN: parse + chunk only (no OpenAI, no Pinecone)
+        # ----------------------------------------------------------
+        if getattr(ctx.config, "dry_run", False):
+            planned_vectors = 0
+
+            for doc_key, canonical, text, extra_metadata in docs:
+                chunks = chunk_text(ctx, text)
+                planned_vectors += len(chunks)
+
+                # Optional: validate metadata shape using first chunk only
+                if chunks:
+                    meta = {
+                        "source_path": base_path,
+                        "key": doc_key,
+                        "source": key,
+                        "document_type": extra_metadata.get("document_type", "unknown"),
+                        "canonical_building_name": canonical,
+                        **extra_metadata,
+                        "text": truncate_by_tokens(
+                            chunks[0],
+                            encoder=ctx.encoder,
+                            max_tokens=getattr(
+                                ctx.config, "max_metadata_text_tokens", 800),
+                        ),
+                    }
+                    ok, reason = MetadataValidator.validate(meta)
+                    if not ok:
+                        logging.warning(
+                            "Dry-run metadata invalid for %s: %s", key, reason)
+
+            logging.info(
+                "🧪 Dry-run planned vectors for %s: %d",
+                key,
+                planned_vectors
+            )
+            if planned_vectors > 0:
+                ctx.stats.increment("files_processed")
+                # treat as planned vectors
+                ctx.stats.increment("total_vectors", planned_vectors)
+            else:
+                ctx.stats.increment("files_skipped")
+
+            return []
 
         # ----------------------------------------------------------
         # 3. Embed & build vectors
@@ -415,50 +317,63 @@ def process_document(
             chunks = chunk_text(ctx, text)
             embeddings = embed_texts_batch(ctx, chunks)
 
+            if chunks and not embeddings:
+                raise RuntimeError(
+                    "Embedding failed: empty embeddings returned")
+
             for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-                vector_id = make_id(base_path, doc_key, i)
-
+                vector_id = make_id(file_id, doc_key, i)
                 key_lower = key.lower()
-                data_type = (extra_metadata.get("data_type") or "").lower()
 
                 # ------------------------------------------------------
-                # Determine document type (incl. maintenance CSVs)
+                # Determine document type
                 # ------------------------------------------------------
-                if is_fire_risk_assessment(key, text):
-                    doc_type = "fire_risk_assessment"
-                elif is_bms_document(key, text):
-                    doc_type = "operational_doc"
-                elif "planon" in key_lower:
-                    doc_type = "planon_data"
+                doc_type = extra_metadata.get("document_type", "unknown")
 
-                # --- Maintenance requests ---
-                elif (
-                    "maintenance requests" in key_lower
-                    or "maintenance_requests" in key_lower
-                    or "maintenance request" in key_lower
-                    or "maintenance_request" in key_lower
-                    or data_type == "maintenance_requests"
-                ):
-                    doc_type = "maintenance_request"
-
-                # --- Maintenance jobs ---
-                elif (
-                    "maintenance jobs" in key_lower
-                    or "maintenance_jobs" in key_lower
-                    or "maintenance job" in key_lower
-                    or "maintenance_job" in key_lower
-                    or data_type == "maintenance_jobs"
-                ):
-                    doc_type = "maintenance_job"
-
+                # If this is a maintenance CSV row, trust the extractor
+                if ext_ in ("csv", "xlsx", "xls") and doc_type in ("maintenance_request", "maintenance_job"):
+                    pass  # source of truth: extract_maintenance_csv()
                 else:
-                    doc_type = extra_metadata.get("document_type", "unknown")
+                    # Non-CSV or non-maintenance documents → infer type
+                    if is_fire_risk_assessment(key, text):
+                        doc_type = DocumentTypes.FIRE_RISK_ASSESSMENT
+                    elif is_bms_document(key, text):
+                        doc_type = DocumentTypes.OPERATIONAL_DOC
+                    elif "planon" in key_lower:
+                        doc_type = DocumentTypes.PLANON_DATA
+                    else:
+                        # keep whatever extractor set (or "unknown")
+                        doc_type = doc_type
 
-                # If the namespace wasn't chosen by filename, map via doc_type rules
+                # Map namespace from doc_type (single source of truth)
                 resolved_namespace = resolve_namespace(doc_type)
-                if not validate_namespace_routing(resolved_namespace):
+                # ---------------------------------------------------------
+                # Emit structured building assignment event (JSONL)
+                # ---------------------------------------------------------
+                if getattr(ctx.config, "export_events", False) and i == 0:
+                    try:
+                        event = {
+                            "file": key,
+                            "canonical_building_name": canonical,
+                            "document_type": doc_type,
+                            "namespace_guess": resolved_namespace,
+                            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                        }
+                        event_path = getattr(ctx.config, "export_events_file")
+                        if event_path:
+                            line = json.dumps(event, ensure_ascii=False) + "\n"
+                            with ctx.export_events_lock:
+                                with open(event_path, "a", encoding="utf-8") as f:
+                                    f.write(line)
+                    except Exception as e:
+                        logging.warning(
+                            "Could not write building event for %s: %s", key, e)
+
+                valid, reason = validate_namespace_routing(
+                    doc_type, resolved_namespace)
+                if not valid:
                     raise ValueError(
-                        f"Invalid resolved namespace: {resolved_namespace}")
+                        f"Invalid namespace routing for doc_type: {doc_type}")
 
                 logging.info(
                     "📁 %s → doc_type=%s → namespace=%s", key, doc_type, resolved_namespace)
@@ -467,72 +382,26 @@ def process_document(
                     "source_path": base_path,
                     "key": doc_key,
                     "source": key,
-                    "text": chunk,
                     "document_type": doc_type,
                     "canonical_building_name": canonical,
                     "namespace": resolved_namespace,
+                    "content_hash": content_hash,
                     **extra_metadata,
                 }
-                # ✅ Add building metadata for maintenance CSV docs too
-                if ext_ == "csv" and doc_type in ("maintenance_request", "maintenance_job") and canonical is not None:
-                    cached_metadata = ctx.cache.get_metadata(canonical)
-                    if cached_metadata:
-                        # Add building aliases if available
-                        if "building_aliases" in cached_metadata and "building_aliases" not in metadata:
-                            metadata["building_aliases"] = cached_metadata["building_aliases"]
 
-                        # Copy standard building metadata fields
-                        for field in [
-                            "Property code", "Property postcode", "Property campus",
-                            "UsrFRACondensedPropertyName", "Property names",
-                            "Property alternative names"
-                        ]:
-                            if field in cached_metadata and field not in metadata:
-                                metadata[field] = cached_metadata[field]
-                    else:
-                        # Fallback alias so building mapping still works
-                        metadata.setdefault("building_aliases", [canonical])
-
-                # ===============================================================
-                # NEW: Add building metadata from cache for non-CSV documents
-                # ===============================================================
-                # This ensures PDFs, DOCXs, etc. have the same metadata fields
-                # as CSV documents, which allows them to populate the building
-                # cache in the UI
-                # ===============================================================
-                if (ext_ != "csv" and canonical and canonical is not None):
-                    cached_metadata = ctx.cache.get_metadata(canonical)
-                    if cached_metadata:
-                        # Add building_aliases if available
-                        if "building_aliases" in cached_metadata and "building_aliases" not in metadata:
-                            metadata["building_aliases"] = cached_metadata["building_aliases"]
-                            if i == 0:  # Log only once per file
-                                logging.info(
-                                    "✅ Added %d building aliases from cache to %s: %s",
-                                    len(cached_metadata["building_aliases"]),
-                                    doc_type,
-                                    ", ".join(cached_metadata["building_aliases"][:3]) +
-                                    ("..." if len(
-                                        cached_metadata["building_aliases"]) > 3 else "")
-                                )
-
-                        # Add other metadata fields from CSV for consistency
-                        for field in ["Property code", "Property postcode", "Property campus",
-                                      "UsrFRACondensedPropertyName", "Property names",
-                                      "Property alternative names", "Property condition",
-                                      "Property gross area (sq m)", "Property net area (sq m)"]:
-                            if field in cached_metadata and field not in metadata:
-                                metadata[field] = cached_metadata[field]
-                    else:
-                        # If no match in cache, add empty building_aliases for consistency
-                        if "building_aliases" not in metadata:
-                            metadata["building_aliases"] = []
-                            if i == 0:  # Log only once per file
-                                logging.debug(
-                                    "No cached metadata for building '%s' in %s, using empty aliases",
-                                    canonical,
-                                    doc_type
-                                )
+                if canonical:
+                    metadata = enrich_with_building_metadata(
+                        metadata=metadata,
+                        canonical=canonical,
+                        ctx=ctx,
+                        doc_type=doc_type,
+                        chunk_idx=i,
+                    )
+                metadata["text"] = truncate_by_tokens(
+                    chunk,
+                    encoder=ctx.encoder,
+                    max_tokens=ctx.config.MAX_METADATA_TEXT_TOKENS
+                )
 
                 valid, reason = MetadataValidator.validate(metadata)
                 if not valid:
@@ -553,7 +422,6 @@ def process_document(
         # ----------------------------------------------------------
         if vectors_to_upsert:
             ctx.stats.increment("files_processed")
-            ctx.stats.increment("total_vectors", len(vectors_to_upsert))
 
         return vectors_to_upsert
 
@@ -565,17 +433,17 @@ def process_document(
 
 
 # ============================================================================
-# IMPROVED: EFFICIENT VECTOR ID CACHING
+# EFFICIENT VECTOR ID CACHING
 # ============================================================================
 
-def get_existing_ids(
+def get_existing_file_ids(
     ctx: IngestContext,
     source_path: str
 ) -> set[str]:
     """
     Fetch existing vector IDs with efficient caching across all namespaces.
 
-    Optimized:
+    Optimised:
     - Uses file-based cache for 100x speed improvement
     - Makes only ONE Pinecone `.list()` API call (covers all namespaces)
     - Handles all configured namespaces safely
@@ -588,89 +456,66 @@ def get_existing_ids(
     Returns:
         A set of unique existing vector IDs across all namespaces
     """
+    if getattr(ctx.config, "dry_run", False):
+        logging.info("🧪 Dry-run: skipping existing-id discovery")
+        return set()
     if not ctx.config.skip_existing:
         return set()
 
-    logging.info("🔍 Fetching existing vector IDs to skip duplicates...")
-    all_ids = set()
+    cache_ns = "__all__"
 
-    # Define namespaces to check
-    namespaces = [None, "property_data",
-                  "maintenance_requests", "maintenance_jobs"]
+    cached = ctx.vector_id_cache.get(source_path, cache_ns)
+    if cached is not None:
+        logging.info("✅ Existing file IDs loaded from cache (%d)", len(cached))
+        return set(cached)
 
-    # -------------------------
-    # STEP 1: Try cache first
-    # -------------------------
-    cache_hits = 0
-    cache_misses = []
+    logging.info("🔍 Fetching existing vector IDs to derive file IDs...")
 
-    for ns in namespaces:
-        cached_ids = ctx.vector_id_cache.get(source_path, ns)
-        if cached_ids is not None:
-            logging.debug("✅ Cache hit for namespace=%s (%d IDs)",
-                          ns or "__default__", len(cached_ids))
-            all_ids.update(cached_ids)
-            cache_hits += 1
-        else:
-            cache_misses.append(ns)
-
-    # If all namespaces were found in cache, skip API calls
-    if not cache_misses:
-        logging.info(
-            "✅ All namespaces loaded from cache (%d namespaces)", cache_hits)
-        logging.info("Found %d existing vectors (from cache)", len(all_ids))
-        return all_ids
-
-    # -------------------------
-    # STEP 2: Fetch from Pinecone
-    # -------------------------
-    logging.info(
-        "📡 Cache miss for %d namespaces — fetching from Pinecone...", len(cache_misses))
     try:
         results = ctx.index.list()
-        if not results:
-            logging.info("No vector IDs found in Pinecone index.")
-            return all_ids
     except Exception as e:
         logging.warning("⚠️ Could not fetch index IDs from Pinecone: %s", e)
-        return all_ids
+        return set()
 
-    # -------------------------
-    # STEP 3: Populate caches per namespace
-    # -------------------------
-    for ns in cache_misses:
-        ns_ids = set()
-        try:
-            for id_list in results:
-                ns_ids.update(id_list)
+    existing_file_ids: set[str] = set()
 
-            ctx.vector_id_cache.set(source_path, ns, ns_ids)
-            all_ids.update(ns_ids)
-            logging.debug("💾 Cached %d IDs for namespace=%s",
-                          len(ns_ids), ns or "__default__")
+    # results looks iterable in your current code; keep same assumption
+    for id_list in results:
+        for vid in id_list:
+            # vid format: "{file_id}:{chunk_idx}"
+            file_id = str(vid).split(":", 1)[0]
+            if file_id:
+                existing_file_ids.add(file_id)
 
-        except Exception as e:
-            logging.warning(
-                "⚠️ Could not process IDs for namespace '%s': %s", ns or "__default__", e)
-            continue
-
-    logging.info(
-        "✅ Found %d total existing vector IDs across all namespaces", len(all_ids))
-    return all_ids
+    ctx.vector_id_cache.set(source_path, cache_ns, existing_file_ids)
+    logging.info("✅ Found %d existing file IDs", len(existing_file_ids))
+    return existing_file_ids
 
 
-def make_id(source_path: str, key: str, chunk_idx: int) -> str:
+def make_file_id(source_path: str, source_key: str, content_hash: str | None = None) -> str:
+    if content_hash is not None and not isinstance(content_hash, str):
+        raise TypeError("content_hash must be a hex string or None")
+    base = f"{source_path}:{source_key}"
+    if content_hash:
+        base += f":{content_hash}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def _doc_sub_id(doc_key: str) -> str:
+    # stable compact identifier for doc_key (building rows etc.)
+    return hashlib.sha1(doc_key.encode("utf-8")).hexdigest()[:12]
+
+
+def make_id(file_id: str, doc_key: str, chunk_idx: int) -> str:
     """
     Generate a deterministic ID for a vector.
-    UNCHANGED from original.
     """
-    base = f"{source_path}:{key}:{chunk_idx}"
-    return hashlib.md5(base.encode()).hexdigest()
-
-
+    # vector identity = file_id + per-doc-key sub-id + chunk index
+    return f"{file_id}:{_doc_sub_id(doc_key)}:{chunk_idx}"
 # ============================================================================
 # TEXT EXTRACTION FUNCTIONS
 # ============================================================================
+
 
 def extract_text(key: str, data: bytes) -> str:
     """
@@ -750,6 +595,8 @@ def embed_texts_batch(
     """
     if not texts:
         return []
+    if getattr(ctx.config, "dry_run", False):
+        return []
 
     for attempt in range(max_retries):
         try:
@@ -800,8 +647,8 @@ def load_building_names_with_aliases(
         return canonical_names, existing_names, existing_aliases
 
     try:
-        data = fetch_bytes(base_path, key)
-        df = pd.read_csv(io.BytesIO(data))
+        data = fetch_bytes_secure(base_path, key)
+        df = load_tabular_data(key, data)
 
         if "Property name" not in df.columns:
             logging.warning("No 'Property name' column in CSV")
@@ -893,7 +740,7 @@ def load_building_names_with_aliases(
 
 
 # ============================================================================
-# DOCUMENT TYPE DETECTION (unchanged)
+# DOCUMENT TYPE DETECTION (NON-CSV)
 # ============================================================================
 
 def is_fire_risk_assessment(key: str, text: str = "") -> bool:
@@ -968,14 +815,14 @@ def extract_text_csv_by_building_enhanced(
         List of (doc_key, canonical_name, text, extra_metadata) tuples
     """
     try:
-        df = pd.read_csv(io.BytesIO(data))
+        df = load_tabular_data(key, data)
 
         if "Property name" not in df.columns:
             logging.warning(
                 "Column 'Property name' not found in CSV. Available: %s",
                 df.columns.tolist()
             )
-            return [(key, "", data.decode("utf-8", errors="ignore"), {})]
+            return [(key, "", data.decode("utf-8", errors="ignore"), {"document_type": "unknown"})]
 
         building_docs = []
 
@@ -1044,7 +891,7 @@ def extract_text_csv_by_building_enhanced(
 
     except Exception as ex:  # pylint: disable=broad-except
         logging.warning("CSV extraction failed: %s", ex)
-        return [(key, "", data.decode("utf-8", errors="ignore"), {})]
+        return [(key, "", data.decode("utf-8", errors="ignore"), {"document_type": "unknown"})]
 
 
 def extract_maintenance_csv(
@@ -1060,94 +907,49 @@ def extract_maintenance_csv(
     Returns:
         List of (doc_key, canonical_name, text, extra_metadata) tuples.
     """
-    import io
-    import json
-    import logging
-    import pandas as pd
-    import re
 
-    # ---------------------------------------------------------
-    # Priority Normalisation
-    # ---------------------------------------------------------
-    PRIORITY_MAPPING = {
-        "rm priority 1": "P1",
-        "rm priority 2": "P2",
-        "rm priority 3": "P3",
-        "rm priority 4": "P4",
-        "rm priority 5": "P5",
-        "rm priority 6": "P6",
-        "planned & preventative maintenance": "PPM",
-        "other": "Other",
-    }
+    def _pick_building_col(df: pd.DataFrame) -> str | None:
+        # Prefer common variants, case-insensitive
+        candidates = ["Property name", "Buildings",
+                      "Building", "Property", "Site"]
+        lower_map = {c.lower().strip(): c for c in df.columns}
 
-    PRIORITY_PATTERN = re.compile(r"rm\s*priority\s*(\d+)", re.IGNORECASE)
+        for cand in candidates:
+            key = cand.lower().strip()
+            if key in lower_map:
+                return lower_map[key]
 
-    def normalise_priority(label: str) -> str:
-        if not label:
-            return "Unknown"
-
-        cleaned = label.strip().lower()
-
-        # Direct match
-        for raw, canon in PRIORITY_MAPPING.items():
-            if cleaned.startswith(raw):
-                return canon
-
-        # RM Priority X fallback
-        m = PRIORITY_PATTERN.search(label)
-        if m:
-            return f"P{m.group(1)}"
-
-        # Fallback for "Other"
-        if cleaned == "other":
-            return "Other"
-
-        return cleaned
-
-    # ---------------------------------------------------------
-    # Header Parser (Requests → 3 layers, Jobs → 2 layers)
-    # ---------------------------------------------------------
-    def parse_pivot_header(col_str: str, is_requests: bool) -> dict:
-        keyword = "Requests" if is_requests else "Jobs"
-        cleaned = col_str.replace(keyword, "").strip()
-        parts = [p.strip() for p in cleaned.split("-") if p.strip()]
-
-        # Requests → category / priority / status
-        if is_requests:
-            if len(parts) == 1:
-                return {"category": parts[0], "priority": "Unknown", "status": "Unknown"}
-            elif len(parts) == 2:
-                return {"category": parts[0], "priority": parts[1], "status": "Unknown"}
-            else:
-                return {"category": parts[0], "priority": parts[1], "status": parts[2]}
-
-        # Jobs → category / status
-        else:
-            if len(parts) == 1:
-                return {"category": parts[0], "status": "Unknown"}
-            else:
-                return {"category": parts[0], "status": parts[1]}
+        return None
 
     # ---------------------------------------------------------
     # Main Processing
     # ---------------------------------------------------------
 
     try:
-        df = pd.read_csv(io.BytesIO(data))
+        df = load_tabular_data(key, data)
 
-        building_col = "Property name"
-        if building_col not in df.columns:
+        building_col = _pick_building_col(df)
+        if not building_col:
             logging.warning(
-                "Column '%s' not found in %s. Available columns: %s",
-                building_col, key, df.columns.tolist()
+                "No recognised building column found in %s. Available columns: %s",
+                key, df.columns.tolist()
             )
             return []
 
         # Identify Requests vs Jobs
-        is_requests = any(
-            "Requests" in col for col in df.columns if col != building_col)
-        data_type = "Maintenance Requests" if is_requests else "Maintenance Jobs"
+        kl = key.lower()
+        if "maintenance_jobs" in kl or "maintenance jobs" in kl:
+            is_requests = False
+        elif "maintenance_requests" in kl or "maintenance requests" in kl:
+            is_requests = True
+        else:
+            is_requests = any("requests" in str(col).lower()
+                              for col in df.columns if col != building_col)
+            is_jobs = any("jobs" in str(col).lower()
+                          for col in df.columns if col != building_col)
+            is_requests = is_requests and not is_jobs
 
+        data_type = "Maintenance Requests" if is_requests else "Maintenance Jobs"
         logging.info("Processing %s with %d rows", data_type, len(df))
 
         building_docs = []
@@ -1159,13 +961,18 @@ def extract_maintenance_csv(
             if pd.isna(building_name):
                 continue
 
-            canonical_name = str(building_name).strip()
+            raw = str(building_name).strip()
+            canonical_name = alias_to_canonical.get(
+                normalise_building_name(raw), raw)
 
             building_text = f"Building: {canonical_name}\n"
             building_text += f"Data Type: {data_type}\n\n"
 
+            doc_type = "maintenance_request" if is_requests else "maintenance_job"
+
             extra_metadata = {
                 "canonical_building_name": canonical_name,
+                "document_type": doc_type,
                 "data_type": data_type.lower().replace(" ", "_"),
                 "file_source": key
             }
@@ -1183,41 +990,45 @@ def extract_maintenance_csv(
 
                 col_str = str(col)
 
-                expected_keyword = "Requests" if is_requests else "Jobs"
-                if expected_keyword not in col_str:
-                    continue
+                col_l = col_str.lower()
+                if is_requests:
+                    if "request" not in col_l:
+                        continue
+                else:
+                    if not any(k in col_l for k in ("job", "work order")):
+                        continue
 
                 try:
                     parsed = parse_pivot_header(col_str, is_requests)
 
                     category = parsed["category"]
-                    status = parsed["status"]
+                    status = (str(parsed.get("status")
+                              or "").strip()) or "unknown"
+                    status = status[:1].upper() + status[1:].lower()
 
-                    priority = parsed.get("priority")
-                    if is_requests and priority:
-                        priority = normalise_priority(priority)
+                    priority_label = normalise_priority(
+                        parsed.get("priority") or "")
 
                     count = int(float(val))
 
                     # --------------------------
                     # STORE STRUCTURED METRICS
                     # --------------------------
-                    if category not in maintenance_metrics:
-                        maintenance_metrics[category] = {}
-
                     if is_requests:
-                        # Category → Priority → Status
-                        if priority not in maintenance_metrics[category]:
-                            maintenance_metrics[category][priority] = {}
-                        maintenance_metrics[category][priority][status] = count
+                        maintenance_metrics.setdefault(category, {})
+                        maintenance_metrics[category].setdefault(
+                            priority_label, {})
+                        leaf = maintenance_metrics[category][priority_label]
+                        leaf[status] = leaf.get(status, 0) + count
 
-                        building_text += f"{category} - {priority} - {status}: {count}\n"
+                        building_text += f"{category} - {priority_label} - {status}: {count}\n"
 
                     else:
                         # Category → Status
-                        maintenance_metrics[category][status] = count
+                        maintenance_metrics.setdefault(category, {})
+                        maintenance_metrics[category][status] = maintenance_metrics[category].get(
+                            status, 0) + count
                         building_text += f"{category} - {status}: {count}\n"
-
                     total_items += count
 
                 except Exception as e:
@@ -1226,16 +1037,24 @@ def extract_maintenance_csv(
                         col, val, e
                     )
                     continue
+            if not maintenance_metrics:
+                logging.warning(
+                    "⚠️ No maintenance metrics extracted for %s (%s). Check header parsing / column keywords.", canonical_name, data_type)
 
             # --------------------------
             # SUMMARY AND METADATA
             # --------------------------
-            if maintenance_metrics:
-                extra_metadata["maintenance_metrics"] = json.dumps(
-                    maintenance_metrics)
-                extra_metadata["total_maintenance_items"] = str(total_items)
-                extra_metadata["categories_count"] = str(
-                    len(maintenance_metrics))
+            metrics_json = json.dumps(maintenance_metrics)
+            if len(metrics_json) > 30000:  # Leave buffer under 40KB limit
+                logging.warning(
+                    "Maintenance metrics too large for %s (%d bytes), truncating",
+                    canonical_name, len(metrics_json)
+                )
+                extra_metadata["maintenance_metrics"] = json.dumps({
+                    "total_items": total_items,
+                    "categories_count": len(maintenance_metrics),
+                    "categories": list(maintenance_metrics.keys())
+                })
 
                 building_text += "\n=== Summary ===\n"
                 building_text += f"Total {data_type}: {total_items}\n"
@@ -1246,9 +1065,7 @@ def extract_maintenance_csv(
                     + "\n"
                 )
             else:
-                extra_metadata["maintenance_metrics"] = "{}"
-                extra_metadata["total_maintenance_items"] = "0"
-                extra_metadata["categories_count"] = "0"
+                extra_metadata["maintenance_metrics"] = metrics_json
 
             # Document key
             doc_key = f"{data_type} - {canonical_name}"
@@ -1269,14 +1086,13 @@ def extract_maintenance_csv(
         return []
 
 # ============================================================================
-# MAIN INGESTION FUNCTION
+# MAIN INGESTION FUNCTION WITH PROGRESS BAR
 # ============================================================================
 
 
-def ingest_local_directory(ctx: IngestContext) -> None:
+def ingest_local_directory_with_progress(ctx, use_progress_bar: bool = True):
     """
-    Ingest documents from local directory into Pinecone index.
-    IMPROVED: Better progress tracking, thread-safe operations.
+    Enhanced ingestion function with progress tracking and security.
     """
     t_start = time.time()
     base_path = ctx.config.local_path
@@ -1285,144 +1101,199 @@ def ingest_local_directory(ctx: IngestContext) -> None:
     if not Path(base_path).exists():
         raise FileNotFoundError(f"Directory not found: {base_path}")
 
-    objs = list_local_files(base_path, ctx.config.ext_whitelist)
-    logging.info("Found %d files in %s", len(objs), base_path)
+    # Use secure file listing
+    objs = list_local_files_secure(
+        base_path,
+        ctx.config.ext_whitelist,
+        ctx.config.max_file_mb
+    )
+    logging.info("Found %d files to process in %s", len(objs), base_path)
 
-    # Get existing IDs to skip re-processing
-    existing_vector_ids = get_existing_ids(ctx, base_path)
+    if not objs:
+        logging.warning("No files found to process!")
+        return
 
-    # Pre-load building names with aliases from CSV if available
+    # Get existing IDs (as before)
+    existing_file_ids = get_existing_file_ids(ctx, base_path)
+
+    # Pre-load building names (as before)
     name_to_canonical = {}
     alias_to_canonical = {}
     known_buildings = []
 
-    csv_key = None
-    for o in objs:
-        # Look for property CSV (not maintenance CSV)
-        if "Property" in o["Key"] and o["Key"].endswith(".csv") and "maintenance" not in o["Key"].lower():
-            csv_key = o["Key"]
-            known_buildings, name_to_canonical, alias_to_canonical = \
-                load_building_names_with_aliases(ctx, base_path, csv_key)
-            break
+    csv_candidates = [
+        o["Key"] for o in objs
+        if "Property" in o["Key"]
+        and o["Key"].endswith(".csv")
+        and "maintenance" not in o["Key"].lower()
+    ]
 
-    if not known_buildings:
-        logging.warning(
-            "⚠️ No Property CSV found - building name matching may be limited")
+    if csv_candidates:
+        known_buildings, name_to_canonical, alias_to_canonical = \
+            load_building_names_with_aliases(ctx, base_path, csv_candidates[0])
+    else:
+        logging.warning("No property CSV found for building name resolution")
 
-    # Thread-safe vector buffer for collecting vectors before upsert
+    # Thread-safe vector buffer
     pending_buffer = ThreadSafeVectorBuffer(ctx.config.max_pending_vectors)
 
-    # Process files
-    if ctx.config.max_workers > 1:
-        logging.info("Processing files with %d workers...",
-                     ctx.config.max_workers)
+    # ============================================================
+    # SEQUENTIAL PROCESSING WITH PROGRESS BAR
+    # ============================================================
+    if ctx.config.max_workers == 1:
+        logging.info("Processing files sequentially with progress tracking...")
 
-        with ThreadPoolExecutor(max_workers=ctx.config.max_workers) as executor:
-            futures = {
-                executor.submit(
-                    process_document,
-                    ctx,
-                    obj,
-                    base_path,
-                    name_to_canonical,
-                    alias_to_canonical,
-                    known_buildings,
-                    existing_vector_ids
-                ): obj
-                for obj in objs
-            }
+        with IngestionProgressTracker(len(objs), use_tqdm=use_progress_bar) as progress:
+            for idx, obj in enumerate(objs, 1):
+                key = obj["Key"]
 
-            for future in as_completed(futures):
-                obj = futures[future]
                 try:
-                    vectors = future.result()
-                    pending_buffer.extend(vectors)
+                    # Use secure file fetching in process_document
+                    # (process_document would need to be updated to use fetch_bytes_secure)
+                    vectors = process_document(
+                        ctx,
+                        obj,
+                        base_path,
+                        name_to_canonical,
+                        alias_to_canonical,
+                        known_buildings,
+                        existing_file_ids
+                    )
+
+                    if vectors:
+                        try:
+                            pending_buffer.extend(vectors)
+                            progress.update(key, len(vectors), "processed")
+                        except BufferError:
+                            if not getattr(ctx.config, "dry_run", False):
+                                upsert_vectors(
+                                    ctx, pending_buffer.get_and_clear())
+                                pending_buffer.extend(vectors)
+                    else:
+                        progress.update(key, 0, "skipped")
 
                     # Upsert when batch is ready
                     if len(pending_buffer) >= min(ctx.config.upsert_batch, ctx.config.max_pending_vectors):
-                        logging.info(
-                            "[5/5] Upserting %d vectors...", len(pending_buffer))
-                        t4 = time.time()
                         batch_to_upsert = pending_buffer.get_and_clear()
-                        upsert_vectors(ctx, batch_to_upsert)
-                        logging.info("Upserted in %.2fs", time.time() - t4)
+                        progress.write_message(
+                            f"Upserting batch of {len(batch_to_upsert)} vectors...")
+                        if not getattr(ctx.config, "dry_run", False):
+                            upsert_vectors(ctx, batch_to_upsert)
 
-                except Exception as e:  # pylint: disable=broad-except
-                    logging.error(
-                        "⚠️ Error processing %s: %s", obj["Key"], e, exc_info=True
-                    )
+                except Exception as e:
+                    progress.update(key, 0, "failed")
+                    progress.write_message(f"ERROR processing {key}: {e}")
                     ctx.stats.increment("files_failed")
-                    ctx.stats.append_failed(obj["Key"])
+                    ctx.stats.append_failed(key)
+    # ============================================================
+    # PARALLEL PROCESSING WITH PROGRESS BAR
+    # ============================================================
     else:
-        # Sequential processing
-        logging.info("Processing files sequentially...")
-        for idx, obj in enumerate(objs, 1):
-            logging.info("Processing file %d/%d: %s",
-                         idx, len(objs), obj["Key"])
+        logging.info("Processing files with %d workers...",
+                     ctx.config.max_workers)
 
-            try:
-                vectors = process_document(
-                    ctx,
-                    obj,
-                    base_path,
-                    name_to_canonical,
-                    alias_to_canonical,
-                    known_buildings,
-                    existing_vector_ids
-                )
-                pending_buffer.extend(vectors)
+        with IngestionProgressTracker(len(objs), use_tqdm=use_progress_bar) as progress:
+            with ThreadPoolExecutor(max_workers=ctx.config.max_workers) as executor:
+                # Submit all tasks
+                futures = {
+                    executor.submit(
+                        process_document,
+                        ctx,
+                        obj,
+                        base_path,
+                        name_to_canonical,
+                        alias_to_canonical,
+                        known_buildings,
+                        existing_file_ids
+                    ): obj
+                    for obj in objs
+                }
 
-                # Upsert when batch is ready
-                if len(pending_buffer) >= min(ctx.config.upsert_batch, ctx.config.max_pending_vectors):
-                    logging.info("[5/5] Upserting %d vectors...",
-                                 len(pending_buffer))
-                    t4 = time.time()
-                    batch_to_upsert = pending_buffer.get_and_clear()
-                    upsert_vectors(ctx, batch_to_upsert)
-                    logging.info("Upserted in %.2fs", time.time() - t4)
+                # Process completed tasks
+                for future in as_completed(futures):
+                    obj = futures[future]
+                    key = obj["Key"]
 
-            except Exception as e:  # pylint: disable=broad-except
-                logging.error(
-                    "Error processing %s: %s", obj["Key"], e, exc_info=True
-                )
-                ctx.stats.increment("files_failed")
-                ctx.stats.append_failed(obj["Key"])
+                    try:
+                        vectors = future.result()
 
-    # Final upsert of remaining vectors
+                        if vectors:
+                            pending_buffer.extend(vectors)
+                            progress.update(key, len(vectors), "processed")
+                        else:
+                            progress.update(key, 0, "skipped")
+
+                        # Upsert when batch is ready
+                        if len(pending_buffer) >= min(ctx.config.upsert_batch, ctx.config.max_pending_vectors):
+                            batch_to_upsert = pending_buffer.get_and_clear()
+                            progress.write_message(
+                                f"Upserting batch of {len(batch_to_upsert)} vectors...")
+                            if not getattr(ctx.config, "dry_run", False):
+                                upsert_vectors(ctx, batch_to_upsert)
+
+                    except Exception as e:
+                        progress.update(key, 0, "failed")
+                        progress.write_message(f"ERROR processing {key}: {e}")
+                        ctx.stats.increment("files_failed")
+                        ctx.stats.append_failed(key)
+
+    # Final upsert
     if not pending_buffer.is_empty():
         logging.info("Final upsert of remaining %d vectors...",
                      len(pending_buffer))
-        t4 = time.time()
         final_batch = pending_buffer.get_and_clear()
-        upsert_vectors(ctx, final_batch)
-        logging.info("Final upsert done in %.2fs", time.time() - t4)
+        if not getattr(ctx.config, "dry_run", False):
+            upsert_vectors(ctx, final_batch)
 
-    # Print statistics
+    # Print final statistics
     stats = ctx.stats.get_stats()
     duration = time.time() - t_start
     vectors_per_sec = stats["total_vectors"] / duration if duration > 0 else 0
 
+    # ----------------------------------------------------------
+    # Export run-level metrics event (JSONL)
+    # ----------------------------------------------------------
+    if getattr(ctx.config, "export_events", False):
+        event_path = getattr(ctx.config, "export_events_file", None)
+        if event_path:
+            metrics = {
+                "event_type": "ingestion_summary",
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                "source_path": base_path,
+                "dry_run": bool(getattr(ctx.config, "dry_run", False)),
+                "duration_seconds": duration,
+                "files_processed": stats["files_processed"],
+                "vectors_created": stats["total_vectors"],
+                "vectors_per_second": vectors_per_sec,
+                "failures": stats["failed_files"],
+            }
+            try:
+                line = json.dumps(metrics, ensure_ascii=False) + "\n"
+                with ctx.export_events_lock:
+                    with open(event_path, "a", encoding="utf-8") as f:
+                        f.write(line)
+            except Exception as e:
+                logging.warning(
+                    "Could not write ingestion summary event: %s", e)
+
     logging.info(
-        """
-========================================
-INGESTION SUMMARY
-========================================
-Files found:          %d
-Files processed:      %d
-Files skipped:        %d
-Files failed:         %d
-Total vectors:        %d
-Vectors skipped:      %d
-Duration:             %.2fs
-Avg speed:            %.1f vectors/sec
-========================================
-""",
+        """========================================
+            INGESTION SUMMARY
+            ========================================
+            Files found:          %d
+            Files processed:      %d
+            Files skipped:        %d
+            Files failed:         %d
+            Total vectors:        %d
+            Duration:             %.2fs
+            Avg speed:            %.1f vectors/sec
+            ========================================
+            """,
         len(objs),
         stats["files_processed"],
         stats["files_skipped"],
         stats["files_failed"],
         stats["total_vectors"],
-        stats["vectors_skipped"],
         duration,
         vectors_per_sec,
     )
@@ -1434,10 +1305,10 @@ Avg speed:            %.1f vectors/sec
 
     logging.info("✅ Ingestion complete!")
 
-
 # ============================================================================
 # CLI
 # ============================================================================
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -1482,45 +1353,76 @@ def parse_args():
         "--events-file",
         help="Path to JSONL export file for building assignment events",
     )
+    p.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress bar display"
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse + chunk only. Do NOT call OpenAI or Pinecone.",
+    )
+
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    if args.validate_routing:
-        validate_namespace_routing(None)
-        logging.info("Namespace routing validation passed.")
-        return 0
 
+    # 1) Load config once
     try:
         config = BatchIngestConfig.from_env()
+
+        # 2) Apply CLI overrides
         if args.path:
             config.local_path = args.path
         if args.workers:
             config.max_workers = args.workers
         if args.force_reindex:
             config.skip_existing = False
+        elif args.skip_existing:
+            config.skip_existing = True
         if args.export_events:
             config.export_events = True
         if args.events_file:
             config.export_events_file = args.events_file
-        elif args.skip_existing:
-            config.skip_existing = True
+        if args.dry_run:
+            config.dry_run = True
+            config.skip_existing = False  # avoid Pinecone dependency in dry-run
+
+        # 3) Validate once
         config.validate()
+
     except Exception as e:
         logging.error("Configuration error: %s", e)
         return 1
 
+    # 4) Optional early-exit validation mode
+    if args.validate_routing:
+        for doc_type, expected_namespace in NAMESPACE_MAPPINGS.items():
+            valid, reason = validate_namespace_routing(
+                doc_type, expected_namespace)
+            if not valid:
+                raise ValueError(
+                    f"Routing validation failed for doc_type='{doc_type}': {reason}"
+                )
+        logging.info("Namespace routing validation passed.")
+        return 0
+
+    # 5) Run ingestion
     ctx = IngestContext(config)
+
     if args.clear_cache:
         logging.info("Clearing vector ID cache...")
         ctx.vector_id_cache.clear_all()
 
     try:
-        ingest_local_directory(ctx)
+        ingest_local_directory_with_progress(
+            ctx, use_progress_bar=not args.no_progress)
+        return 0
     except KeyboardInterrupt:
         logging.warning("⚠️ Ingestion interrupted by user. Cleaning up...")
-        # Optionally flush remaining vectors before exiting
         if not ctx.vector_id_cache.cache_dir.exists():
             ctx.vector_id_cache.cache_dir.mkdir(parents=True, exist_ok=True)
         logging.info("Saving any cached progress before shutdown.")

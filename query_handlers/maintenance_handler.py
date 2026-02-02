@@ -4,7 +4,7 @@
 """
 Improved MaintenanceHandler.
 Handles maintenance-related requests, jobs, categories, and metrics.
-Delegates logic to counting_queries.generate_maintenance_answer.
+Delegates logic to generate_maintenance_answers.generate_maintenance_answer.
 """
 from query_types import QueryType
 from query_context import QueryContext
@@ -64,7 +64,7 @@ class MaintenanceHandler(BaseQueryHandler):
         query_text = context.query.strip()
 
         try:
-            from structured_queries import generate_maintenance_answer
+            from generate_maintenance_answers import generate_maintenance_answer
 
             prev_building = None
             previous_context = getattr(context, "previous_context", None)

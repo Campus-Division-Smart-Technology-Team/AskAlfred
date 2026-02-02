@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import logging
 import re
+import json
 from typing import Dict, List, Optional, Any, Union, Tuple
 from collections import defaultdict
 from building_utils import (
     extract_building_from_query as extract_building, resolve_building_name_fuzzy)
+
 
 # Category mappings
 MAINTENANCE_CATEGORIES = {
@@ -40,10 +42,13 @@ MAINTENANCE_CATEGORIES = {
     "door": "Doors",
     "doors": "Doors",
     "drainage": "Drainage",
-    "electrical": "Electrical",
-    "emergency": "Emergency",
+    "electrical testing": "Electrical Testing",
+    "electrical major power loss": "Electrical Major Power Loss",
+    "electrical small power loss": "Electrical Small Power Loss",
+    "emergency lighting": "Emergency Lighting",
     "extract": "Extract",
     "fire": "Fire alarms",
+    "fire doors": "Fire Doors",
     "alarm": "Fire alarms",
     "floor": "Floors",
     "floors": "Floors",
@@ -229,6 +234,10 @@ def parse_priority_label(label: str) -> Tuple[Optional[str], Optional[str]]:
         sla = None
 
     return (pcode, sla)
+
+# -----------------------------------------------------------------------------
+# AGGREGATION FUNCTIONS
+# -----------------------------------------------------------------------------
 
 
 def aggregate_request_metrics(
@@ -675,3 +684,188 @@ def calculate_maintenance_summary(metrics: Dict[str, Dict[str, int]]) -> Dict[st
         "categories_count": len(metrics or {}),
         "completion_rate": round((total_complete / total) if total else 0.0, 3),
     }
+
+
+def filter_maintenance_buildings(
+    matches: list[dict],
+    building: str | None,
+    category: str | None,
+    priority: str | None,
+    status: str | None,
+) -> list[dict]:
+    """
+    Filter building-level maintenance vectors by:
+      • building name
+      • category
+      • priority (P1-P6, PPM, Other)  [requests only]
+      • status (open, complete, in progress, etc.)
+
+    Supports:
+      • Requests metrics (3-level): category -> priority -> status -> count
+      • Jobs metrics (2-level):     category -> status -> count
+    """
+    category_l = category.lower().strip() if category else None
+    status_l = status.lower().strip() if status else None
+    _priority_val = normalise_priority(priority) if priority else None
+    priority_norm = _priority_val.strip().lower(
+    ) if isinstance(_priority_val, str) else None
+
+    filtered: list[dict] = []
+
+    def _parse_metrics(raw_metrics: Any) -> dict:
+        """Parse metrics from JSON string or dict."""
+        if isinstance(raw_metrics, str):
+            try:
+                return json.loads(raw_metrics)
+            except Exception:
+                return {}
+        elif isinstance(raw_metrics, dict):
+            return raw_metrics
+        else:
+            return {}
+
+    for m in matches:
+        md = m.get("metadata", {}) or {}
+        raw_metrics = md.get("maintenance_metrics", {})
+
+        # Parse metrics (may be JSON string)
+        metrics = _parse_metrics(raw_metrics)
+
+        if not isinstance(metrics, dict) or not metrics:
+            continue
+
+        # Building filter
+        bname = md.get("canonical_building_name") or md.get(
+            "building_name") or ""
+        if building and building.lower() not in bname.lower():
+            continue
+
+        # Detect request-shaped metrics (4-level) vs jobs (2-level)
+        is_req = False
+        try:
+            is_req = is_request_metrics(metrics)
+        except Exception:
+            is_req = False
+
+        # ----------------------------
+        # CATEGORY filter
+        # ----------------------------
+        if category_l:
+            if not any(isinstance(k, str) and k.lower() == category_l for k in metrics.keys()):
+                continue
+
+        # ----------------------------
+        # PRIORITY filter (requests only)
+        # ----------------------------
+        if priority_norm:
+            if not is_req:
+                # priority filter doesn't apply to jobs
+                continue
+            wanted_code = normalise_priority(priority)  # "P3"
+            wanted_code_l = wanted_code.lower() if wanted_code else None
+
+            if not wanted_code_l:
+                continue
+
+            def _prio_label_matches(priority_label: str, wanted=wanted_code_l) -> bool:
+                pcode, _sla = parse_priority_label(priority_label)
+                return (pcode or "").lower() == wanted
+
+            def _has_priority_in_cat(cat_key: str) -> bool:
+                prios = metrics.get(cat_key, {})
+                if not isinstance(prios, dict):
+                    return False
+                return any(isinstance(p, str) and _prio_label_matches(p) for p in prios.keys())
+
+            if category_l:
+                # find actual category key (preserve original case)
+                cat_key = next(
+                    (k for k in metrics.keys() if isinstance(
+                        k, str) and k.lower() == category_l),
+                    None
+                )
+                if not cat_key or not _has_priority_in_cat(cat_key):
+                    continue
+            else:
+                ok = False
+                for cat_key, prios in metrics.items():
+                    if not isinstance(cat_key, str) or not isinstance(prios, dict):
+                        continue
+                    if any(isinstance(p, str) and _prio_label_matches(p) for p in prios.keys()):
+                        ok = True
+                        break
+                if not ok:
+                    continue
+
+        # ----------------------------
+        # STATUS filter
+        # ----------------------------
+        if status_l:
+            #     if is_req:
+            # # Aggregate across full 4-level cube
+            # agg = aggregate_request_metrics(metrics) or {}
+            # by_status = agg.get("by_status", {}) or {}
+            # # Compare case-insensitively
+            # count_for_status = 0
+            # for st, c in by_status.items():
+            #     if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
+            #         count_for_status = c
+            #         break
+            # if count_for_status <= 0:
+            #     continue
+            if is_req:
+                # If category filter is present, only count statuses within that category.
+                if category_l:
+                    cat_key = next(
+                        (k for k in metrics.keys() if isinstance(
+                            k, str) and k.lower() == category_l),
+                        None
+                    )
+                    if not cat_key:
+                        continue
+
+                    agg = aggregate_request_metrics_by_category(metrics) or {}
+                    cat = (agg.get("by_category", {})
+                           or {}).get(cat_key, {}) or {}
+                    by_status = cat.get("by_status", {}) or {}
+                else:
+                    agg = aggregate_request_metrics(metrics) or {}
+                    by_status = agg.get("by_status", {}) or {}
+
+                # Compare case-insensitively
+                count_for_status = 0
+                for st, c in by_status.items():
+                    if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
+                        count_for_status = c
+                        break
+                if count_for_status <= 0:
+                    continue
+
+            else:
+                # Jobs: category -> status -> count
+                total = 0
+                if category_l:
+                    cat_key = next((k for k in metrics.keys() if isinstance(
+                        k, str) and k.lower() == category_l), None)
+                    if not cat_key:
+                        continue
+                    statuses = metrics.get(cat_key, {})
+                    if isinstance(statuses, dict):
+                        for st, c in statuses.items():
+                            if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
+                                total += c
+                    if total <= 0:
+                        continue
+                else:
+                    for _, statuses in metrics.items():
+                        if not isinstance(statuses, dict):
+                            continue
+                        for st, c in statuses.items():
+                            if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
+                                total += c
+                    if total <= 0:
+                        continue
+
+        filtered.append(m)
+
+    return filtered

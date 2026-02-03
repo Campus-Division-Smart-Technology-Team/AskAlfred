@@ -26,7 +26,7 @@ def strip_markdown_and_code(text: str) -> str:
     for pattern, repl in MARKDOWN_REPLACEMENTS:
         text = pattern.sub(repl, text)
 
-    # 4) Normalize whitespace
+    # 4) Normalisse whitespace
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
 

@@ -8,21 +8,20 @@ Logging at INFO level for query tracing
 """
 
 from __future__ import annotations
-from maintenance_utils import _plural
-from typing import Any, Dict, List, cast, Optional, Union
-
-import json
+from typing import Any, Dict, List, cast, Optional
 import logging
 import re
 from collections import defaultdict
-from pinecone_utils import open_index
+from maintenance_utils import _plural
+from pinecone_utils import open_index, query_all_chunks
 from config import TARGET_INDEXES, resolve_namespace, normalise_ns, get_display_namespace
 from building_utils import (BuildingCacheManager,
                             normalise_building_name,
                             extract_building_from_query)
 from building_validation import sanitise_building_candidate
 from generate_maintenance_answers import generate_maintenance_answer
-
+from emojis import (EMOJI_TICK, EMOJI_CHART, EMOJI_REPEAT, EMOJI_BRAIN,
+                    EMOJI_CROSS, EMOJI_CLIPBOARD, EMOJI_CAUTION, EMOJI_SEARCH, EMOJI_INIT,)
 
 # -----------------------------------------------------------------------------
 # Constants that need to be available before imports
@@ -42,7 +41,7 @@ PROPERTY_CONDITION_NORMALISATION = {
 # -----------------------------------------------------------------------------
 # Initialise logging
 # -----------------------------------------------------------------------------
-logging.info("✅ structured_queries.py (FULL FUNCTIONAL) loaded")
+logging.info("%s structured_queries.py (FULL FUNCTIONAL) loaded", EMOJI_TICK)
 
 # -----------------------------------------------------------------------------
 # Constants & Regex Patterns
@@ -107,11 +106,9 @@ DOC_TYPE_MAPPINGS = {
     "planon": "planon_data",
     "property": "planon_data",
     "request": "maintenance_request",
-    "job": "maintenance_job",
     "requests": "maintenance_request",
-    "request": "maintenance_request",
-    "jobs": "maintenance_job",
     "job": "maintenance_job",
+    "jobs": "maintenance_job",
 }
 
 DOC_TYPE_NAMES_SIMPLE = {
@@ -186,9 +183,18 @@ def normalise_property_condition(query: str) -> Optional[str]:
     return None
 
 
-def query_property_by_condition(condition: str, index_names: Optional[List[str]] = None) -> Dict[str, Any]:
+def is_yes_no_property_condition_question(query: str) -> bool:
+    q = (query or "").strip().lower()
+    # Covers: "is X derelict", "is X in condition b", "does X have condition c", etc.
+    return bool(re.search(r"^(is|are|does|do)\b", q))
+
+
+def query_property_by_condition(condition: str,
+                                building_filter: Optional[str] = None,
+                                index_names: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Query buildings by property condition from the 'planon_data' namespace.
+    Optionally filter by a specific building.
     """
     if index_names is None:
         index_names = TARGET_INDEXES
@@ -197,11 +203,19 @@ def query_property_by_condition(condition: str, index_names: Optional[List[str]]
     canonical_condition = condition
     matching_buildings: List[Dict[str, Any]] = []
 
+    building_l = building_filter.lower().strip() if building_filter else None
+
+    # Create Pinecone filter
+    filter_dict = None
+    if building_filter:
+        # Use the existing building filter creation function
+        filter_dict = create_building_filter(building_filter)
+
     for idx_name in index_names:
         matches = _query_index_with_batches(
             idx_name=idx_name,
             namespace=namespace,
-            filter_dict=None,
+            filter_dict=filter_dict,
             top_k=DEFAULT_BATCH_TOP_K,
         )
 
@@ -242,7 +256,7 @@ def rank_buildings_by_area(
     Returns:
         Dict structured for generate_ranking_answer().
     """
-    logging.info("📊 rank_buildings_by_area() called - area_type='%s', order='%s', limit=%s",
+    logging.info("%s rank_buildings_by_area() called - area_type='%s', order='%s', limit=%s", EMOJI_CHART,
                  area_type, order, limit)
 
     # Which metadata field to read
@@ -256,7 +270,7 @@ def rank_buildings_by_area(
     buildings: Dict[str, Dict[str, Any]] = {}
 
     # Fetch all vectors from each target index
-    logging.info("   Querying %d target indexes for namespace '%s'",
+    logging.info("%s Querying %d target indexes for namespace '%s'", EMOJI_INIT,
                  len(TARGET_INDEXES), namespace)
     for idx in TARGET_INDEXES:
         matches = _query_index_with_batches(
@@ -265,7 +279,8 @@ def rank_buildings_by_area(
             filter_dict=None,
             top_k=DEFAULT_BATCH_TOP_K
         )
-        logging.info("   Index '%s': Retrieved %d matches", idx, len(matches))
+        logging.info("%s Index '%s': Retrieved %d matches",
+                     EMOJI_TICK, idx, len(matches))
 
         for match in matches:
             md = match.get("metadata", {}) or {}
@@ -295,10 +310,11 @@ def rank_buildings_by_area(
                 }
 
     total = len(buildings)
-    logging.info("   Total buildings with valid area data: %d", total)
+    logging.info("%s Total buildings with valid area data: %d",
+                 EMOJI_CLIPBOARD, total)
     if total == 0:
         logging.warning(
-            "   ⚠️ No buildings found with area data - returning empty results")
+            "%s No buildings found with area data - returning empty results", EMOJI_CAUTION)
         return {
             "ranking_type": "area",
             "metric": f"{area_type}_area_sq_m",
@@ -311,7 +327,7 @@ def rank_buildings_by_area(
     reverse = (order == "desc")
     ranked = sorted(buildings.values(),
                     key=lambda x: x["area"], reverse=reverse)
-    logging.info("   Buildings sorted by area (%s order)",
+    logging.info("%s Buildings sorted by area (%s order)", EMOJI_TICK,
                  "descending" if reverse else "ascending")
 
     # Apply limit if given
@@ -319,10 +335,10 @@ def rank_buildings_by_area(
         original_count = len(ranked)
         ranked = ranked[:limit]
         logging.info(
-            "   Applied limit: %d (reduced from %d buildings)", limit, original_count)
+            "%s Applied limit: %d (reduced from %d buildings)", EMOJI_BRAIN, limit, original_count)
     else:
         logging.info(
-            "   No limit applied; returning all %d buildings", len(ranked))
+            "%s No limit applied; returning all %d buildings", EMOJI_CAUTION, len(ranked))
 
     # Add rank numbers
     for i, item in enumerate(ranked, 1):
@@ -339,7 +355,7 @@ def rank_buildings_by_area(
         for item in ranked
     ]
     logging.info(
-        "✅ rank_buildings_by_area() completed - returning %d ranked buildings", len(results))
+        "%s rank_buildings_by_area() completed - returning %d ranked buildings", EMOJI_TICK, len(results))
 
     return {
         "ranking_type": "area",
@@ -389,8 +405,6 @@ def _query_index_with_batches(
     Query a Pinecone index in batches with optional filters.
     Returns all matches from all batches combined and deduplicated.
     """
-    from pinecone_utils import query_all_chunks
-
     namespace = normalise_ns(namespace)
     display_namespace = get_display_namespace(namespace)
 
@@ -402,14 +416,14 @@ def _query_index_with_batches(
 
         if total_vecs == 0:
             print(
-                f"DEBUG: namespace='{namespace}' raw_stats_keys={stats.get('namespaces', {}).keys()}")
+                "DEBUG: namespace='%s' raw_stats_keys=%s", namespace, stats.get('namespaces', {}).keys())
             logging.info(
-                f"[{idx_name}] namespace={namespace} has 0 vectors")
+                "[%s] namespace=%s has 0 vectors", idx_name, namespace)
             return []
 
         safe_top_k = min(top_k, MAX_SAFE_TOP_K)
         logging.info(
-            f"[{idx_name}] Fetching up to {safe_top_k} vectors from namespace={display_namespace}")
+            "[%s] Fetching up to %d vectors from namespace=%s", idx_name, safe_top_k, display_namespace)
         # Use zero vector to fetch all
         dim = idx.describe_index_stats().get("dimension", 1536)
         zero_vec = [0.0] * dim
@@ -426,12 +440,12 @@ def _query_index_with_batches(
         # normalised = normalise_matches(all_matches)
         deduped = _dedupe_matches_by_key(all_matches)
         logging.info(
-            f"[{idx_name}] Retrieved {len(deduped)} unique matches (from {len(all_matches)} total)")
+            "[%s] Retrieved %d unique matches (from %d total)", idx_name, len(deduped), len(all_matches))
 
         return deduped
 
     except Exception as e:
-        logging.error(f"Error querying {idx_name}: {e}")
+        logging.error("Error querying %s: %s", idx_name, e)
         return []
 
 
@@ -454,18 +468,18 @@ def _query_index_with_fallback(
     """
     # Try primary namespace first
     logging.info(
-        f"🔍 Querying primary namespace: '{primary_namespace}' in {idx_name}")
+        "%s Querying primary namespace: '%s' in %s", EMOJI_SEARCH, primary_namespace, idx_name)
     matches = _query_index_with_batches(
         idx_name, primary_namespace, filter_dict, top_k)
 
     if matches:
         logging.info(
-            f"✅ Found {len(matches)} matches in primary namespace: {primary_namespace}")
+            "%s Found %s matches in primary namespace: %s", EMOJI_TICK, len(matches), primary_namespace)
         return matches
 
     # No matches in primary - try fallback namespaces
     logging.warning(
-        f"⚠️ No matches in primary namespace '{primary_namespace}', trying fallbacks...")
+        "%s No matches in primary namespace '%s', trying fallbacks...", EMOJI_CAUTION, primary_namespace)
 
     # Define fallback namespaces to try
     fallback_namespaces = [
@@ -486,25 +500,27 @@ def _query_index_with_fallback(
         display_ns = get_display_namespace(fallback_ns)
         try:
 
-            logging.info(f"  🔄 Trying fallback namespace: {display_ns}")
+            logging.info("%s Trying fallback namespace: %s",
+                         EMOJI_REPEAT, display_ns)
 
             matches = _query_index_with_batches(
                 idx_name, fallback_ns, filter_dict, top_k)
 
             if matches:
                 logging.warning(
-                    f"✅ SUCCESS: Found {len(matches)} matches in fallback namespace: {display_ns}\n"
-                    f"   ⚠️ CONFIGURATION ISSUE: Update NAMESPACE_MAPPINGS to use '{fallback_ns}' instead of '{primary_namespace}'"
+                    "%s SUCCESS: Found %s matches in fallback namespace: %s\n"
+                    " %s CONFIGURATION ISSUE: Update NAMESPACE_MAPPINGS to use '%s' instead of '%s'", EMOJI_TICK,
+                    len(matches), display_ns, EMOJI_CAUTION, fallback_ns, primary_namespace
                 )
                 return matches
 
         except Exception as e:
             logging.debug(
-                f"  Failed to query fallback namespace {display_ns}: {e}")
+                "%s Failed to query fallback namespace %s: %s", EMOJI_CAUTION, display_ns, e)
             continue
 
     logging.error(
-        f"❌ No matches found in primary or any fallback namespaces for {idx_name}")
+        "%s No matches found in primary or any fallback namespaces for %s", EMOJI_CROSS, idx_name)
     return []
 
 
@@ -529,17 +545,18 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
         idx = open_index(index_name)
         stats = idx.describe_index_stats()
 
-        logging.info(f"\n{'='*60}")
-        logging.info(f"📊 DIAGNOSTIC: Index stats for '{index_name}'")
-        logging.info(f"{'='*60}")
+        logging.info("\n%s", "="*60)
+        logging.info("%s DIAGNOSTIC: Index stats for '%s'",
+                     EMOJI_CHART, index_name)
+        logging.info("%s", "="*60)
         logging.info(
-            f"  Total vectors: {stats.get('total_vector_count', 0):,}")
-        logging.info(f"  Dimension: {stats.get('dimension', 0)}")
+            "  Total vectors: %d", stats.get('total_vector_count', 0))
+        logging.info("  Dimension: %d", stats.get('dimension', 0))
 
         namespaces = stats.get("namespaces", {})
 
         if not namespaces:
-            logging.warning("⚠️ No namespaces found in index!")
+            logging.warning("%s No namespaces found in index!", EMOJI_CAUTION)
             result["recommendations"].append(
                 "CRITICAL: Index has no namespaces — check ingestion."
             )
@@ -558,7 +575,7 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
 
             display_ns = ns_name or "__default__"
             logging.info(
-                f"\n  Namespace '{display_ns}': {vector_count:,} vectors")
+                "\n  Namespace '%s': %d vectors", display_ns, vector_count)
 
             if vector_count == 0:
                 continue
@@ -598,9 +615,9 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
                     doc_types.keys())
 
                 # Logging info
-                logging.info(f"    Document types found:")
+                logging.info("    Document types found:")
                 for dt, count in sorted(doc_types.items(), key=lambda x: -x[1]):
-                    logging.info(f"      - {dt}: {count} vectors (sample)")
+                    logging.info("      - %s: %d vectors (sample)", dt, count)
 
                     if "maintenance" in dt.lower():
                         result["maintenance_namespaces"].append({
@@ -610,33 +627,33 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
                         })
 
                 logging.info(
-                    f"    Vectors with building metadata: {building_count}/{len(matches)}"
+                    "    Vectors with building metadata: %d/%d", building_count, len(
+                        matches)
                 )
 
             except Exception as e:
                 logging.warning(
-                    f"⚠️ Could not sample namespace '{display_ns}': {e}")
+                    "%s Could not sample namespace '%s': %s", EMOJI_CAUTION, display_ns, e)
                 result["namespaces"][ns_name]["error"] = str(e)
 
         # ----------------------------------------------------
         # Recommendations
         # ----------------------------------------------------
-        logging.info(f"\n{'='*60}")
-        logging.info("📋 RECOMMENDATIONS")
-        logging.info(f"{'='*60}")
+        logging.info("\n%s", "="*60)
+        logging.info("%s RECOMMENDATIONS", EMOJI_CLIPBOARD)
+        logging.info("%s", "="*60)
 
         if result["maintenance_namespaces"]:
             logging.info(
-                f"✅ Found maintenance data in "
-                f"{len(result['maintenance_namespaces'])} namespace(s):"
+                "%s Found maintenance data in %d namespace(s):", EMOJI_TICK,
+                len(result['maintenance_namespaces'])
             )
 
             for item in result["maintenance_namespaces"]:
                 ns = item["namespace"] or "__default__"
                 logging.info(
-                    f"   - Namespace: {ns}\n"
-                    f"     Doc type: {item['doc_type']}\n"
-                    f"     Sample count: {item['sample_count']}"
+                    "   - Namespace: %s\n     Doc type: %s\n     Sample count: %d",
+                    ns, item['doc_type'], item['sample_count']
                 )
                 result["recommendations"].append(
                     f"✅ Use namespace '{ns}' for doc_type '{item['doc_type']}'"
@@ -650,27 +667,37 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
                 "💡 Validate namespace mapping during ingestion"
             ])
 
-        logging.info(f"{'='*60}\n")
+        logging.info("%s\n", "="*60)
 
         return result
 
     except Exception as e:
-        logging.error(f"❌ Diagnostic failed: {e}", exc_info=True)
+        logging.error("%s Diagnostic failed: %s",
+                      EMOJI_CROSS, e, exc_info=True)
         result["error"] = str(e)
         result["recommendations"].append(f"CRITICAL ERROR: {e}")
         return result
 
 
-def create_maintenance_building_filter(building_name: str) -> Dict[str, Any]:
+def create_building_filter(building_name: str) -> Dict[str, Any]:
     """
     Create a Pinecone filter for a building name, checking both
     canonical_building_name and building_name fields.
     """
-    norm_building = normalise_building_name(building_name)
+    raw = (building_name or "").strip()
+    norm = normalise_building_name(raw)
+
+    # De-duplicate if normalise_building_name doesn't change it
+    candidates = [raw] if raw == norm else [raw, norm]
+
     return {
         "$or": [
-            {"canonical_building_name": {"$eq": norm_building}},
-            {"building_name": {"$eq": norm_building}},
+            {"canonical_building_name": {"$in": candidates}},
+            {"building_name": {"$in": candidates}},
+            # Optional: if you ingest aliases as a list, this helps a lot
+            {"building_aliases": {"$in": candidates}},
+            # Optional: if Planon name is stored under this field in metadata
+            {"UsrFRACondensedPropertyName": {"$in": candidates}},
         ]
     }
 
@@ -687,424 +714,133 @@ def create_document_building_filter(building_name: str) -> Dict[str, Any]:
         ]
     }
 
-
-# def flatten_request_metrics(metrics: dict) -> dict[str, dict[str, int]]:
-#     """
-#     Convert:
-#        category -> priority -> status -> count
-#     into:
-#        category -> status -> count
-#     Summing across priorities.
-#     """
-#     flat = {}
-#     for cat, priorities in metrics.items():
-#         if not isinstance(priorities, dict):
-#             continue
-#         for priority, statuses in priorities.items():
-#             if not isinstance(statuses, dict):
-#                 continue
-#             for status, count in statuses.items():
-#                 if not isinstance(count, int):
-#                     continue
-#                 flat.setdefault(cat, {})
-#                 flat[cat][status] = flat[cat].get(status, 0) + count
-#     return flat
-
-
-# def _filter_maintenance_buildings(
-#     matches: list[dict],
-#     building: str | None,
-#     category: str | None,
-#     priority: str | None,
-#     status: str | None,
-# ) -> list[dict]:
-#     """
-#     Filter building-level maintenance vectors by:
-#       • building name
-#       • category
-#       • priority (P1-P6, PPM, Other)  [requests only]
-#       • status (open, complete, in progress, etc.)
-
-#     Supports:
-#       • Requests metrics (3-level): category -> priority -> status -> count
-#       • Jobs metrics (2-level):     category -> status -> count
-#     """
-#     category_l = category.lower().strip() if category else None
-#     status_l = status.lower().strip() if status else None
-#     _priority_val = normalise_priority(priority) if priority else None
-#     priority_norm = _priority_val.strip().lower(
-#     ) if isinstance(_priority_val, str) else None
-
-#     filtered: list[dict] = []
-
-#     def _parse_metrics(raw_metrics: Any) -> dict:
-#         """Parse metrics from JSON string or dict."""
-#         if isinstance(raw_metrics, str):
-#             try:
-#                 return json.loads(raw_metrics)
-#             except Exception:
-#                 return {}
-#         elif isinstance(raw_metrics, dict):
-#             return raw_metrics
-#         else:
-#             return {}
-
-#     for m in matches:
-#         md = m.get("metadata", {}) or {}
-#         raw_metrics = md.get("maintenance_metrics", {})
-
-#         # Parse metrics (may be JSON string)
-#         metrics = _parse_metrics(raw_metrics)
-
-#         if not isinstance(metrics, dict) or not metrics:
-#             continue
-
-#         # Building filter
-#         bname = md.get("canonical_building_name") or md.get(
-#             "building_name") or ""
-#         if building and building.lower() not in bname.lower():
-#             continue
-
-#         # Detect request-shaped metrics (4-level) vs jobs (2-level)
-#         is_req = False
-#         try:
-#             is_req = is_request_metrics(metrics)
-#         except Exception:
-#             is_req = False
-
-#         # ----------------------------
-#         # CATEGORY filter
-#         # ----------------------------
-#         if category_l:
-#             if not any(isinstance(k, str) and k.lower() == category_l for k in metrics.keys()):
-#                 continue
-
-#         # ----------------------------
-#         # PRIORITY filter (requests only)
-#         # ----------------------------
-#         if priority_norm:
-#             if not is_req:
-#                 # priority filter doesn't apply to jobs
-#                 continue
-#             wanted_code = normalise_priority(priority)  # "P3"
-#             wanted_code_l = wanted_code.lower() if wanted_code else None
-
-#             if not wanted_code_l:
-#                 continue
-
-#             def _prio_label_matches(priority_label: str, wanted=wanted_code_l) -> bool:
-#                 pcode, _sla = parse_priority_label(priority_label)
-#                 return (pcode or "").lower() == wanted
-
-#             def _has_priority_in_cat(cat_key: str) -> bool:
-#                 prios = metrics.get(cat_key, {})
-#                 if not isinstance(prios, dict):
-#                     return False
-#                 return any(isinstance(p, str) and _prio_label_matches(p) for p in prios.keys())
-
-#             if category_l:
-#                 # find actual category key (preserve original case)
-#                 cat_key = next(
-#                     (k for k in metrics.keys() if isinstance(
-#                         k, str) and k.lower() == category_l),
-#                     None
-#                 )
-#                 if not cat_key or not _has_priority_in_cat(cat_key):
-#                     continue
-#             else:
-#                 ok = False
-#                 for cat_key, prios in metrics.items():
-#                     if not isinstance(cat_key, str) or not isinstance(prios, dict):
-#                         continue
-#                     if any(isinstance(p, str) and _prio_label_matches(p) for p in prios.keys()):
-#                         ok = True
-#                         break
-#                 if not ok:
-#                     continue
-
-#         # ----------------------------
-#         # STATUS filter
-#         # ----------------------------
-#         if status_l:
-#             #     if is_req:
-#             # # Aggregate across full 4-level cube
-#             # agg = aggregate_request_metrics(metrics) or {}
-#             # by_status = agg.get("by_status", {}) or {}
-#             # # Compare case-insensitively
-#             # count_for_status = 0
-#             # for st, c in by_status.items():
-#             #     if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
-#             #         count_for_status = c
-#             #         break
-#             # if count_for_status <= 0:
-#             #     continue
-#             if is_req:
-#                 # If category filter is present, only count statuses within that category.
-#                 if category_l:
-#                     cat_key = next(
-#                         (k for k in metrics.keys() if isinstance(
-#                             k, str) and k.lower() == category_l),
-#                         None
-#                     )
-#                     if not cat_key:
-#                         continue
-
-#                     agg = aggregate_request_metrics_by_category(metrics) or {}
-#                     cat = (agg.get("by_category", {})
-#                            or {}).get(cat_key, {}) or {}
-#                     by_status = cat.get("by_status", {}) or {}
-#                 else:
-#                     agg = aggregate_request_metrics(metrics) or {}
-#                     by_status = agg.get("by_status", {}) or {}
-
-#                 # Compare case-insensitively
-#                 count_for_status = 0
-#                 for st, c in by_status.items():
-#                     if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
-#                         count_for_status = c
-#                         break
-#                 if count_for_status <= 0:
-#                     continue
-
-#             else:
-#                 # Jobs: category -> status -> count
-#                 total = 0
-#                 if category_l:
-#                     cat_key = next((k for k in metrics.keys() if isinstance(
-#                         k, str) and k.lower() == category_l), None)
-#                     if not cat_key:
-#                         continue
-#                     statuses = metrics.get(cat_key, {})
-#                     if isinstance(statuses, dict):
-#                         for st, c in statuses.items():
-#                             if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
-#                                 total += c
-#                     if total <= 0:
-#                         continue
-#                 else:
-#                     for _, statuses in metrics.items():
-#                         if not isinstance(statuses, dict):
-#                             continue
-#                         for st, c in statuses.items():
-#                             if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
-#                                 total += c
-#                     if total <= 0:
-#                         continue
-
-#         filtered.append(m)
-
-#     return filtered
-
-# -----------------------------------------------------------------------------
-# Maintenance Query Logic
-# -----------------------------------------------------------------------------
-
-
-# def generate_maintenance_answer(
-#     query: str,
-#     building_override: str | None = None,
-# ) -> Optional[str]:
-#     """
-#     Handles maintenance queries using building-level vectors in Pinecone.
-#     Filters on metadata, then delegates formatting to maintenance_utils.
-#     """
-#     logging.info(f"🔍 MAINTENANCE QUERY: '{query}'")
-
-#     # Ensure cache is ready
-#     BuildingCacheManager.ensure_initialised()
-
-#     # --- Parse query ---
-#     if not BuildingCacheManager.is_populated():
-#         logging.warning(
-#             "⚠️ Building cache not populated — no building filtering possible")
-#         known_buildings = []
-#     else:
-#         known_buildings = BuildingCacheManager.get_known_buildings()
-
-#     parsed = parse_maintenance_query(query, known_buildings=known_buildings)
-#     logging.info(f"📋 PARSED: {parsed}")
-
-#     building = parsed.get("building_name")
-#     category = parsed.get("category")
-#     priority = parsed.get("priority")
-#     status = parsed.get("status")
-#     query_type = parsed.get("query_type") or "requests"
-
-#     q_l = query.lower()
-#     is_global_buildings_query = (
-#         re.search(r"\bwhich\s+buildings?\b", q_l) is not None
-#         or re.search(r"\ball\s+buildings?\b", q_l) is not None
-#         or re.search(r"\bacross\s+(all\s+)?buildings?\b", q_l) is not None
-#     )
-
-#     if (not building) and building_override and not is_global_buildings_query:
-#         logging.info(
-#             f"🧠 Using building from context override: {building_override}")
-#         building = building_override
-
-#     logging.info(f"\n🔧 MAINTENANCE QUERY ANALYSIS")
-#     logging.info(f"  Query: {query}")
-#     logging.info(f"  Building: {building}")
-#     logging.info(f"  Category: {category}")
-#     logging.info(f"  Status: {status}")
-#     logging.info(f"  Query type: {query_type}")
-
-#     building = sanitise_building_candidate(building)
-
-#     # --- Namespace selection ---
-#     namespace = "maintenance_jobs" if query_type == "jobs" else "maintenance_requests"
-#     logging.info(f"🔎 Using Pinecone namespace: {namespace}")
-
-#     idx = open_index("local-docs")
-#     ns_details = idx.describe_index_stats().get("namespaces", {})
-#     if namespace not in ns_details:
-#         logging.warning(
-#             f"⚠️ Namespace '{namespace}' not found — available: {list(ns_details.keys())}")
-
-#     # --- Query Pinecone for all vectors in namespace ---
-#     dim = idx.describe_index_stats().get("dimension", 1536)
-#     zero_vec = [0.0] * dim
-
-#     raw: Any = idx.query(
-#         vector=zero_vec,
-#         top_k=2000,
-#         namespace=namespace,
-#         include_metadata=True,
-#     )
-#     response = raw.to_dict() if hasattr(
-#         raw, "to_dict") else cast(Dict[str, Any], raw)
-#     matches = response.get("matches", [])
-#     logging.info(f"Retrieved {len(matches)} maintenance building vectors")
-
-#     # --- Filter by building/category/status ---
-#     filtered = _filter_maintenance_buildings(
-#         matches, building, category, priority, status)
-#     logging.info(f"Filtered matches: {len(filtered)}")
-#     if not filtered:
-#         return "No buildings match that maintenance query."
-
-#     # --- Build a deduped map: building -> status_totals ---
-#     building_status_map: Dict[str, Dict[str, int]] = {}
-
-#     for m in filtered:
-#         md = m.get("metadata", {}) or {}
-#         bname = md.get("canonical_building_name") or md.get(
-#             "building_name") or "Unknown building"
-
-#         metrics = md.get("maintenance_metrics", {})
-#         if isinstance(metrics, str):
-#             try:
-#                 metrics = json.loads(metrics)
-#             except Exception:
-#                 metrics = {}
-#         if not isinstance(metrics, dict) or not metrics:
-#             continue
-
-#         # Requests: use aggregator (status -> count)
-#         if query_type == "requests" and is_request_metrics(metrics):
-#             # agg = aggregate_request_metrics(metrics) or {}
-#             # by_status = agg.get("by_status", {}) or {}
-#             # status_totals = {
-#             #     str(k).lower(): int(v)
-#             #     for k, v in by_status.items()
-#             #     if isinstance(v, int)
-#             # }
-#             if category:
-#                 agg = aggregate_request_metrics_by_category(metrics) or {}
-#                 # find actual category key (preserve case)
-#                 cat_key = next(
-#                     (k for k in metrics.keys() if isinstance(
-#                         k, str) and k.lower() == category.lower()),
-#                     None
-#                 )
-#                 cat = (agg.get("by_category", {}) or {}).get(
-#                     cat_key, {}) if cat_key else {}
-#                 by_status = (cat or {}).get("by_status", {}) or {}
-#             else:
-#                 agg = aggregate_request_metrics(metrics) or {}
-#                 by_status = agg.get("by_status", {}) or {}
-
-#             status_totals = {
-#                 str(k).lower(): int(v)
-#                 for k, v in by_status.items()
-#                 if isinstance(v, int)
-#             }
-
-#         else:
-#             # Jobs: category -> status -> count
-#             status_totals: Dict[str, int] = {}
-#             for cat_name, statuses in metrics.items():
-#                 # If category filter is specified, only process that category
-#                 if category and cat_name.lower() != category.lower():
-#                     continue
-#                 if not isinstance(statuses, dict):
-#                     continue
-#                 for s, c in statuses.items():
-#                     if isinstance(s, str) and isinstance(c, int):
-#                         s_l = s.lower()
-#                         status_totals[s_l] = status_totals.get(s_l, 0) + c
-
-#         # Merge (max to avoid duplicate double-counting)
-#         if bname not in building_status_map:
-#             building_status_map[bname] = status_totals
-#         else:
-#             for k, v in status_totals.items():
-#                 building_status_map[bname][k] = max(
-#                     building_status_map[bname].get(k, 0), v)
-
-#     # --- Compute totals BEFORE slicing ---
-#     ranked = sorted(
-#         ((b, sum(stats.values())) for b, stats in building_status_map.items()),
-#         key=lambda x: -x[1],
-#     )
-#     total_buildings = len(ranked)
-#     total_records = sum(total for _, total in ranked)
-
-#     # --- Take top 10 buildings for display ---
-#     top_buildings = [b for b, _ in ranked[:10]]
-#     trimmed_stats: Dict[str, Dict[str, int]] = {
-#         b: building_status_map[b] for b in top_buildings}
-
-#     # ✅ Delegate the entire rendering to the multi-building formatter
-#     return format_multi_building_metrics(
-#         building_stats=trimmed_stats,
-#         total_buildings=total_buildings,
-#         total_records=total_records,
-#         query_type=query_type,
-#         limit=10,
-#     )
-
 # -----------------------------------------------------------------------------
 # Property Condition + Ranking
 # -----------------------------------------------------------------------------
 
 
 def generate_property_condition_answer(query: str) -> Optional[str]:
+    # condition = normalise_property_condition(query)
+    # if not condition:
+    #     return "Please specify a property condition (e.g., Condition A, Condition B, Derelict)."
+
+    q = (query or "").strip()
+    ql = q.lower()
+
+    # Extract building name from query
+    known = BuildingCacheManager.get_known_buildings(
+    ) if BuildingCacheManager.is_populated() else []
+    building = sanitise_building_candidate(
+        extract_building_from_query(query, known)
+    )
     condition = normalise_property_condition(query)
-    if not condition:
-        return "Please specify a property condition (e.g., Condition A, Condition B, Derelict)."
+    yes_no_intent = is_yes_no_property_condition_question(query)
 
-    results = query_property_by_condition(condition)
+    # ------------------------------------------------------------------
+    # CASE A: Building specified but NO condition specified
+    # e.g. "What is the property condition of BDFI?"
+    # ------------------------------------------------------------------
+    if building and not condition:
+        # Query Planon vectors for just this building, then read Property condition
+        matches_found = []
+        for idx_name in TARGET_INDEXES:
+            matches = _query_index_with_batches(
+                idx_name=idx_name,
+                namespace="planon_data",
+                filter_dict=create_building_filter(building),
+                top_k=DEFAULT_BATCH_TOP_K,
+            )
+            matches_found.extend(matches)
 
-    building_count = results['building_count']
-    if building_count == 0:
-        return f"No buildings found with property condition '{condition}'."
+        # Extract first non-empty property condition (dedupe-ish)
+        prop_condition = None
+        for m in matches_found:
+            md = (m.get("metadata", {}) or {})
+            val = md.get("Property condition")
+            if isinstance(val, str) and val.strip():
+                prop_condition = val.strip()
+                break
 
-    answer = f"**{building_count} {_plural(building_count, 'building')}** are **{condition}**\n\n"
+        if not prop_condition:
+            return f"I couldn't find a property condition for **{building}** in Planon data."
 
-    for i, building in enumerate(results['matching_buildings'][:5], 1):
-        answer += f"{i}. **{building['building_name']}**\n"
-        answer += f"   - Condition: {building['condition']}\n"
-        if building.get('campus'):
-            answer += f"   - Campus: {building['campus']}\n"
-        if building.get('gross_area'):
-            answer += f"   - Gross Area: {building['gross_area']} sq m\n"
-        answer += "\n"
+        return f"The property condition of **{building}** is **{prop_condition}**."
+    # ------------------------------------------------------------------
+    # CASE B: No building and no condition → prompt user (unchanged behavior)
+    # ------------------------------------------------------------------
+    if not building and not condition:
+        return "Please specify a property condition (e.g., Condition A, Condition B, Derelict) or a building."
 
-    if building_count > 5:
-        answer += f"➕ ... and {building_count - 5} more buildings."
+    # ------------------------------------------------------------------
+    # CASE C: Condition specified (with or without building)
+    # e.g. "Is BDFI derelict?" or "Which buildings are derelict?"
+    # ------------------------------------------------------------------
+    if condition:
+        results = query_property_by_condition(
+            condition, building_filter=building)
+        building_count = results["building_count"]
 
-    return answer
+        # If user asked about a specific building + yes/no intent → return boolean answer
+        if building and yes_no_intent:
+            if building_count > 0:
+                return f"Yes, **{building}** is **{condition}**."
+            return f"No, **{building}** is not **{condition}**."
+
+        # If user asked about a specific building (not yes/no) → return direct statement, no list
+        if building:
+            if building_count == 0:
+                return f"Building **{building}** does not have property condition **{condition}**."
+            return f"**{building}** is **{condition}**."
+
+        # Otherwise (no building) → listing/count output as before
+        if building_count == 0:
+            return f"No buildings found with property condition '{condition}'."
+
+        answer = f"**{building_count} {_plural(building_count, 'building')}** are **{condition}**\n\n"
+        for i, b in enumerate(results["matching_buildings"][:5], 1):
+            answer += f"{i}. **{b['building_name']}**\n"
+            answer += f"   - Condition: {b['condition']}\n"
+            if b.get("campus"):
+                answer += f"   - Campus: {b['campus']}\n"
+            if b.get("gross_area"):
+                answer += f"   - Gross Area: {b['gross_area']} sq m\n"
+            answer += "\n"
+
+        if building_count > 5:
+            answer += f"➕ ... and {building_count - 5} more buildings."
+
+        return answer
+
+    # Fallback (should be unreachable)
+    return None
+
+    # results = query_property_by_condition(condition,  building_filter=building)
+
+    # building_count = results['building_count']
+    # if building_count == 0:
+    #     # return f"No buildings found with property condition '{condition}'."
+    #     if building:
+    #         return f"Building '{building}' does not have property condition '{condition}'."
+    #     return f"No buildings found with property condition '{condition}'."
+
+    # if building:
+    #     answer = f"**{building}** is **{condition}**\n\n"
+    # else:
+    #     answer = f"**{building_count} {_plural(building_count, 'building')}** are **{condition}**\n\n"
+
+    # for i, building in enumerate(results['matching_buildings'][:5], 1):
+    #     answer += f"{i}. **{building['building_name']}**\n"
+    #     answer += f"   - Condition: {building['condition']}\n"
+    #     if building.get('campus'):
+    #         answer += f"   - Campus: {building['campus']}\n"
+    #     if building.get('gross_area'):
+    #         answer += f"   - Gross Area: {building['gross_area']} sq m\n"
+    #     answer += "\n"
+
+    # if building_count > 5:
+    #     answer += f"➕ ... and {building_count - 5} more buildings."
+
+    # return answer
 
 
 def generate_ranking_answer(query: str) -> Optional[str]:
@@ -1112,7 +848,8 @@ def generate_ranking_answer(query: str) -> Optional[str]:
     Generate an answer for building ranking queries (by area).
     Works with rank_buildings_by_area() structured output.
     """
-    logging.info("🔢 generate_ranking_answer() called with query: '%s'", query)
+    logging.info(
+        "%s generate_ranking_answer() called with query: '%s'", EMOJI_INIT, query)
     q = query.lower()
 
     # Determine area type
@@ -1137,12 +874,10 @@ def generate_ranking_answer(query: str) -> Optional[str]:
     results = rank_buildings_by_area(
         area_type=area_type, order=order, limit=limit)
 
-    logging.info("   rank_buildings_by_area() returned results")
-
     total_buildings = results.get('total_buildings', 0)
     ranked = results.get('results', [])
 
-    logging.info("   Results: total_buildings=%d, ranked_results=%d",
+    logging.info("%s Results: total_buildings=%d, ranked_results=%d", EMOJI_CHART,
                  total_buildings, len(ranked))
 
     if total_buildings == 0 or not ranked:
@@ -1153,7 +888,7 @@ def generate_ranking_answer(query: str) -> Optional[str]:
     area_text = "gross" if area_type == 'gross' else "net"
 
     logging.info(
-        "   Generating formatted answer for %d buildings", len(ranked))
+        "%s Generating formatted answer for %d buildings", EMOJI_BRAIN, len(ranked))
 
     # Build answer
     answer = f"**Buildings ranked by {area_text} area ({order_text} first):**\n\n"
@@ -1180,7 +915,7 @@ def generate_ranking_answer(query: str) -> Optional[str]:
             answer += f"   - Condition: {condition}\n"
 
         answer += "\n"
-    logging.info("✅ generate_ranking_answer() completed - returning formatted answer (%d chars)",
+    logging.info("%s generate_ranking_answer() completed - returning formatted answer (%d chars)", EMOJI_TICK,
                  len(answer))
     return answer
 
@@ -1216,7 +951,7 @@ def generate_counting_answer(query: str) -> Optional[str]:
             filter_dict = create_document_building_filter(
                 building)  # added placeholder
         else:
-            filter_dict = create_maintenance_building_filter(building)
+            filter_dict = create_building_filter(building)
 
     if doc_type:
         doc_filter = {"document_type": {"$eq": doc_type}}

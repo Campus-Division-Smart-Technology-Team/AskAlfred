@@ -7,7 +7,6 @@ Query Manager - Centralised query orchestration for AskAlfred.
 
 
 from typing import Optional, Dict, Any, List, Tuple
-from enum import Enum
 import logging
 import time
 
@@ -34,6 +33,7 @@ from intent_classifier import NLPIntentClassifier
 from query_types import QueryType
 from session_manager import SessionManager
 from building_validation import INVALID_BUILDING_NAMES
+from emojis import EMOJI_CROSS, EMOJI_TICK, EMOJI_CAUTION, EMOJI_TIME
 
 # ============================================================================
 # FOLLOWUP CONFIGs
@@ -237,7 +237,7 @@ class QueryManager:
             context.building = prev_building
             # Log the successful inheritance for debugging!
             self.logger.info(
-                "✅ CONTEXT INHERITED: Building '%s' from previous turn.",
+                "%s CONTEXT INHERITED: Building '%s' from previous turn.", EMOJI_TICK,
                 context.building
             )
             context.routing_notes.append(
@@ -245,9 +245,9 @@ class QueryManager:
         else:
             # Log why inheritance did not occur
             self.logger.info(
-                "❌ CONTEXT INHERITANCE SKIPPED: Followup is '%s' but "
+                "%s CONTEXT INHERITANCE SKIPPED: Followup is '%s' but "
                 "context.building is '%s' or "
-                "previous context missing building (%s).",
+                "previous context missing building (%s).", EMOJI_CROSS,
                 q, context.building, 'building' in prev
             )
 
@@ -282,7 +282,7 @@ class QueryManager:
         Returns:
             QueryResult
         """
-        self.logger.warning(f"RAW QUERY: {query}")
+        self.logger.warning("RAW QUERY: %s", query)
 
         start_time = time.time()   # timing for this request
 
@@ -298,7 +298,8 @@ class QueryManager:
         # Defensive Logging
         if prev_context_dict:
             self.logger.info(
-                f"MEMORY LOADED: Previous building: {prev_context_dict.get('building')!r}"
+                "MEMORY LOADED: Previous building: %r", prev_context_dict.get(
+                    'building')
             )
 
         # Attach previous QueryContext data (if any)
@@ -326,7 +327,7 @@ class QueryManager:
         # 🔧 Normalise / clean building extracted by preprocessors
         if context.building and context.building.lower() in INVALID_BUILDING_NAMES:
             self.logger.info(
-                "⚠️ Discarding invalid building from preprocessors: %r",
+                "%s Discarding invalid building from preprocessors: %r", EMOJI_CAUTION,
                 context.building,
             )
             context.building = None
@@ -366,7 +367,7 @@ class QueryManager:
             result.processing_time_ms = elapsed_ms
             return result
 
-        self.logger.warning(f"FINAL QUERY BEFORE ROUTING: {context.query!r}")
+        self.logger.warning("FINAL QUERY BEFORE ROUTING: %r", context.query)
 
         # ---------------------------------------------------
         # Routing
@@ -405,7 +406,7 @@ class QueryManager:
         # 5. CONVERSATIONAL MEMORY PERSISTENCE
         # ---------------------------------------------------
         self.logger.warning(
-            f"MEMORY PERSISTENCE CHECK: context.building is {context.building!r}"
+            "MEMORY PERSISTENCE CHECK: context.building is %r", context.building
         )
         try:
             # Save compact QueryContext into session memory
@@ -425,7 +426,7 @@ class QueryManager:
         # Total round-trip time for everything
         total_elapsed_ms = (time.time() - start_time) * 1000
         result.processing_time_ms = total_elapsed_ms
-        logging.info("⏱ QueryManager.process_query took %.2f ms",
+        logging.info("%s QueryManager.process_query took %.2f ms", EMOJI_TIME,
                      result.processing_time_ms)
 
         return result
@@ -464,7 +465,9 @@ class QueryManager:
                         best_handler = handler
             except Exception as e:
                 self.logger.error(
-                    f"Handler {handler.__class__.__name__} failed during can_handle(): {e}",
+                    "Handler %s failed during can_handle(): %s",
+                    handler.__class__.__name__,
+                    e,
                     exc_info=True
                 )
 
@@ -500,7 +503,7 @@ class QueryManager:
                         best_handler = handler
             except Exception as e:
                 self.logger.error(
-                    f"Handler {handler.__class__.__name__} failed during can_handle(): {e}",
+                    "Handler %s failed during can_handle(): %s", handler.__class__.__name__, e,
                     exc_info=True
                 )
 

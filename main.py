@@ -23,8 +23,8 @@ from building_utils import (
     extract_building_from_query,
 )
 from config import TARGET_INDEXES, DEFAULT_NAMESPACE, USE_QUERY_MANAGER
-from emojis import (EMOJI_BUILDING, EMOJI_FIRE, EMOJI_GORILLA,
-                    EMOJI_MAINTENANCE, EMOJI_BOOKS, EMOJI_MEDAL)
+from emojis import (EMOJI_GORILLA, EMOJI_CAUTION,
+                    EMOJI_BOOKS, EMOJI_MEDAL, EMOJI_TIME)
 from query_manager import QueryManager
 
 
@@ -54,24 +54,29 @@ logging.basicConfig(
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
+# Silence noisy libraries
+for n in ("torch", "torch._dynamo", "torch._subclasses.fake_tensor"):
+    lg = logging.getLogger(n)
+    lg.setLevel(logging.WARNING)
+    lg.propagate = False
+
+
 # Ensure all loggers propagate properly
 # Access manager/loggerDict defensively to satisfy static checkers and avoid attribute errors.
-_root = getattr(logging, "root", None)
-_manager = getattr(_root, "manager", None) if _root is not None else None
-_logger_dict = getattr(_manager, "loggerDict", None)
+# _root = getattr(logging, "root", None)
+# _manager = getattr(_root, "manager", None) if _root is not None else None
+# _logger_dict = getattr(_manager, "loggerDict", None)
 
-if isinstance(_logger_dict, dict):
-    for name in list(_logger_dict.keys()):
-        try:
-            logging.getLogger(name).setLevel(logging.INFO)
-            logging.getLogger(name).propagate = True
-        except Exception:
-            # Ignore issues when adjusting non-standard loggers
-            pass
-
-
-# Import our modules
-
+# if isinstance(_logger_dict, dict):
+#     for name in list(_logger_dict.keys()):
+#         try:
+#             lg = logging.getLogger(name)
+#             if name == "torch" or name.startswith("torch."):
+#                 continue
+#             lg.setLevel(logging.INFO)
+#             lg.propagate = True
+#         except Exception:
+#             pass
 
 # ============================================================================
 # CONSTANTS
@@ -343,11 +348,12 @@ def main():
     # Initialise building cache
     t0 = time.time()
     cache_status = initialise_building_cache()
-    logging.info("⏱ Building cache init took %.1f s", time.time() - t0)
+    logging.info("%s Building cache init took %.1f s",
+                 EMOJI_TIME, time.time() - t0)
 
     if not cache_status['populated']:
         st.warning(
-            "⚠️ Building name cache could not be initialised. "
+            f"{EMOJI_CAUTION} Building name cache could not be initialised. "
             "Building name detection may be limited to pattern matching."
         )
     else:

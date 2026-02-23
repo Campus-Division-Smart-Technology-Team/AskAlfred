@@ -113,6 +113,11 @@ def main() -> int:
             config.upsert_workers = args.upsert_workers
 
         config.validate()
+        logging.info(
+            "Ingest config: upsert_workers=%d, fra_supersession_single_threaded=%s",
+            config.upsert_workers,
+            config.fra_supersession_single_threaded,
+        )
 
     except ConfigError as error:
         logging.error("Configuration error: %s", error)

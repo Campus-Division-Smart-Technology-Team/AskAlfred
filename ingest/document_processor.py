@@ -501,6 +501,21 @@ class DocumentProcessor:
             vectors_to_upsert=vectors_to_upsert,
             parse_pool=self.parse_pool,
         )
+        if docs:
+            try:
+                assessment_date = extracted_result.get("fra_assessment_date")
+                assessment_date_int = extracted_result.get("fra_assessment_date_int")
+                if assessment_date or assessment_date_int:
+                    for idx, (doc_key, canonical, text, extra_metadata) in enumerate(docs):
+                        if assessment_date and not extra_metadata.get("fra_assessment_date"):
+                            extra_metadata["fra_assessment_date"] = assessment_date
+                        if assessment_date_int and not extra_metadata.get("fra_assessment_date_int"):
+                            extra_metadata["fra_assessment_date_int"] = assessment_date_int
+                        docs[idx] = (doc_key, canonical, text, extra_metadata)
+            except (AttributeError, IndexError, KeyError, TypeError):
+                self.ctx.logger.warning(
+                    "Could not propagate FRA assessment date for %s", key
+                )
         extracted = extracted_result["added"]
         self.ctx.stats.increment("fra_risk_items_extracted", extracted)
         # ESCALATION / DIAGNOSTICS PATH: no risk items extracted
@@ -925,7 +940,7 @@ class Vectoriser:
             return []
 
         vectors_to_upsert: list[dict[str, Any]] = []
-        if self._processor.maybe_extract_fra_vectors(
+        self._processor.maybe_extract_fra_vectors(
             key=key,
             text_sample=text_sample or "",
             building=building,
@@ -936,10 +951,9 @@ class Vectoriser:
             vectors_to_upsert=vectors_to_upsert,
             is_fra_candidate=is_fra_candidate,
             docs=docs,
-        ):
-            return vectors_to_upsert
+        )
 
-        return self._processor.build_vectors_from_docs(
+        vectors_to_upsert.extend(self._processor.build_vectors_from_docs(
             key=key,
             extension=extension,
             file_id=file_id,
@@ -948,7 +962,9 @@ class Vectoriser:
             start_time=start_time,
             docs=docs,
             precomputed_chunks=precomputed_chunks,
-        )
+        ))
+
+        return vectors_to_upsert
 
 
 class Writer:

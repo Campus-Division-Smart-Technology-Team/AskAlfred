@@ -133,6 +133,7 @@ def main() -> int:
     parser.add_argument("--property-csv", required=True, help="Path to Dim-Property CSV.")
     parser.add_argument("--fuzzy-strong", type=float, default=0.80, help="Strong fuzzy match threshold.")
     parser.add_argument("--fuzzy-weak", type=float, default=0.70, help="Weak fuzzy match threshold.")
+    parser.add_argument("--output", help="Optional CSV output path.")
     args = parser.parse_args()
 
     base = Path(args.path)
@@ -144,6 +145,15 @@ def main() -> int:
         raise SystemExit(f"Property CSV not found: {csv_path}")
 
     canonicals, name_to_canonical, alias_to_canonical = _load_property_csv(csv_path)
+    output_path = Path(args.output).resolve() if args.output else None
+    writer = None
+    handle = None
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = output_path.open("w", newline="", encoding="utf-8")
+        writer = csv.writer(handle)
+        writer.writerow(["file", "extracted", "canonical", "confidence", "source"])
+
     print("file\textracted\tcanonical\tconfidence\tsource")
     for file_path in _iter_files(base):
         res = resolve_building(
@@ -155,6 +165,16 @@ def main() -> int:
             fuzzy_weak=args.fuzzy_weak,
         )
         _print_resolution(res)
+        if writer:
+            writer.writerow([
+                res.filename,
+                res.extracted or "",
+                res.canonical,
+                f"{res.confidence:.2f}",
+                res.source,
+            ])
+    if handle:
+        handle.close()
     return 0
 
 

@@ -1036,6 +1036,8 @@ def extract_fra_risk_items_integration(
             "parsing_warnings": parsing_warnings,
             "parsing_field_scores": parsing_field_scores,
             "missing_action_plan": missing_action_plan,
+            "fra_assessment_date": None,
+            "fra_assessment_date_int": None,
         }
 
     ctx.logger.info(
@@ -1048,6 +1050,11 @@ def extract_fra_risk_items_integration(
     enriched_items: list[EnrichedRiskItem] = [
         triage_computer.compute_flags(item) for item in risk_items
     ]
+    assessment_date = None
+    assessment_date_int = None
+    if enriched_items:
+        assessment_date = enriched_items[0].get("fra_assessment_date")
+        assessment_date_int = enriched_items[0].get("fra_assessment_date_int")
     enriched_items = deduplicate_risk_items(ctx, enriched_items)
     if not enriched_items:
         ctx.logger.info("All FRA risk items already exist for %s", key)
@@ -1057,6 +1064,8 @@ def extract_fra_risk_items_integration(
             "parsing_warnings": parsing_warnings,
             "parsing_field_scores": parsing_field_scores,
             "missing_action_plan": missing_action_plan,
+            "fra_assessment_date": assessment_date,
+            "fra_assessment_date_int": assessment_date_int,
         }
 
     if getattr(ctx.config, "dry_run", False):
@@ -1068,6 +1077,8 @@ def extract_fra_risk_items_integration(
             "parsing_warnings": parsing_warnings,
             "parsing_field_scores": parsing_field_scores,
             "missing_action_plan": missing_action_plan,
+            "fra_assessment_date": assessment_date,
+            "fra_assessment_date_int": assessment_date_int,
         }
 
     summaries: list[str] = []
@@ -1176,4 +1187,6 @@ def extract_fra_risk_items_integration(
         "parsing_warnings": parsing_warnings,
         "parsing_field_scores": parsing_field_scores,
         "missing_action_plan": missing_action_plan,
+        "fra_assessment_date": assessment_date,
+        "fra_assessment_date_int": assessment_date_int,
     }

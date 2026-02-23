@@ -79,3 +79,5 @@ class FraVectorExtractResult(TypedDict):
     parsing_warnings: Optional[list[str]]
     parsing_field_scores: Optional[dict[str, float]]
     missing_action_plan: Optional[bool]
+    fra_assessment_date: Optional[str]
+    fra_assessment_date_int: Optional[int]

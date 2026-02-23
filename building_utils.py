@@ -171,19 +171,19 @@ FUZZY_MATCH_THRESHOLD = 0.80
 BUILDING_PATTERNS = [
     # Pattern 1: Allow optional number prefix like "1-9" or "123"
     re.compile(
-        r'\bat\s+((?:\d+[\s\-]*)*[A-Za-z][A-Za-z0-9\s\-\']+)', re.IGNORECASE),
+        r'\bat\s+((?:\d+[\s\-]+)*\d*[A-Za-z][A-Za-z0-9\s\-\']+)', re.IGNORECASE),
 
     # Pattern 2: "in <building>" - accepts lowercase
     re.compile(
-        r'\bin\s+((?:\d+[\s\-]*)*[A-Za-z][A-Za-z\s\-\']+)', re.IGNORECASE),
+        r'\bin\s+((?:\d+[\s\-]+)*\d*[A-Za-z][A-Za-z\s\-\']+)', re.IGNORECASE),
 
     # Pattern 3: "for <building>" - accepts lowercase
     re.compile(
-        r'\bfor\s+((?:\d+[\s\-]*)*[A-Za-z][A-Za-z\s\-\']+)', re.IGNORECASE),
+        r'\bfor\s+((?:\d+[\s\-]+)*\d*[A-Za-z][A-Za-z\s\-\']+)', re.IGNORECASE),
 
     # Pattern 4: "of <building>" - NEW: for "FRA of building" queries
     re.compile(
-        r'\bof\s+((?:\d+[\s\-]*)*[A-Za-z][A-Za-z\s\-\']+)', re.IGNORECASE),
+        r'\bof\s+((?:\d+[\s\-]+)*\d*[A-Za-z][A-Za-z\s\-\']+)', re.IGNORECASE),
 
     # Pattern 5: "<building> building/house/etc" - accepts lowercase
     re.compile(

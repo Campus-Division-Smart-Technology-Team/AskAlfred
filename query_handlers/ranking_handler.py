@@ -8,18 +8,18 @@ Delegates ranking logic to counting_queries.generate_ranking_answer.
 """
 
 import re
+# First party import
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
-
-
 from structured_queries import (
     is_ranking_query,
     is_maintenance_query,
     is_property_condition_query,
     is_counting_query,
+    generate_ranking_answer
 )
-
+# Local import
 from .base_handler import BaseQueryHandler
 
 
@@ -97,8 +97,6 @@ class RankingHandler(BaseQueryHandler):
         query_text = context.query.strip()
 
         try:
-            from structured_queries import generate_ranking_answer
-
             answer = generate_ranking_answer(query_text)
 
             if not answer:

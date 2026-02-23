@@ -16,9 +16,9 @@ from __future__ import annotations
 import logging
 import re
 import json
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Optional, Any, Union
 from collections import defaultdict
-from building_utils import (
+from building.utils import (
     extract_building_from_query as extract_building, resolve_building_name_fuzzy)
 
 
@@ -147,7 +147,7 @@ def normalise_priority(label: str | None) -> Optional[str]:
     return None
 
 
-def is_request_metrics(metrics: Dict[str, Any]) -> bool:
+def is_request_metrics(metrics: dict[str, Any]) -> bool:
     # Heuristic: category -> priority -> status -> int
     for _, prios in (metrics or {}).items():
         if not isinstance(prios, dict) or not prios:
@@ -168,7 +168,7 @@ def is_request_metrics(metrics: Dict[str, Any]) -> bool:
 # -----------------------------------------------------------------------------
 
 
-def extract_building_name_from_query(query: str, known_buildings: List[str]) -> Optional[str]:
+def extract_building_name_from_query(query: str, known_buildings: list[str]) -> Optional[str]:
     """
     Delegates building extraction entirely to building_utils then fallback.
     known_buildings is passed through when available.
@@ -209,7 +209,7 @@ def extract_building_name_from_query(query: str, known_buildings: List[str]) -> 
 # -----------------------------------------------------------------------------
 
 
-def parse_priority_label(label: str) -> Tuple[Optional[str], Optional[str]]:
+def parse_priority_label(label: str) -> tuple[Optional[str], Optional[str]]:
     """
     From a label like 'RM Priority 3 - Within 1 working week'
     return ('P3', 'Within 1 working week').
@@ -241,8 +241,8 @@ def parse_priority_label(label: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def aggregate_request_metrics(
-    metrics: Dict[str, Any]
-) -> Dict[str, Any]:
+    metrics: dict[str, Any]
+) -> dict[str, Any]:
     """
     Aggregate maintenance request metrics.
 
@@ -295,7 +295,7 @@ def aggregate_request_metrics(
     }
 
 
-def aggregate_job_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+def aggregate_job_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     """
     Aggregate maintenance job metrics.
 
@@ -311,7 +311,7 @@ def aggregate_job_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
       }
     """
     by_status = defaultdict(int)
-    by_category: Dict[str, Any] = {}
+    by_category: dict[str, Any] = {}
     total = 0
 
     for category, statuses in (metrics or {}).items():
@@ -412,10 +412,10 @@ def aggregate_request_metrics_by_category(metrics: dict) -> dict:
 
 
 def aggregate_maintenance_metrics_any(
-    metrics: Dict[str, Any],
+    metrics: dict[str, Any],
     *,
     requests_group_by_category: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Detects whether `metrics` looks like request-metrics or job-metrics and routes
     to the appropriate aggregator.
@@ -440,12 +440,12 @@ def aggregate_maintenance_metrics_any(
     return aggregate_job_metrics(metrics)
 
 
-def parse_maintenance_query(query: str, known_buildings: List[str]) -> Dict[str, Optional[str]]:
+def parse_maintenance_query(query: str, known_buildings: list[str]) -> dict[str, Optional[str]]:
     """
     Parse the maintenance query into structured parts.
     Returns dict: building_name, category, status, query_type
     """
-    result: Dict[str, Optional[str]] = {
+    result: dict[str, Optional[str]] = {
         "building_name": None,
         "category": None,
         "priority": None,
@@ -491,19 +491,19 @@ def fmt(n: int) -> str:
 
 
 def format_job_metrics(
-    metrics: Dict[str, Dict[str, int]],
+    metrics: dict[str, dict[str, int]],
     category_filter: Optional[str] = None,
     status_filter: Optional[str] = None,
     return_dict: bool = False,
     building_name: Optional[str] = None,
-) -> Union[str, Dict[str, Any]]:
+) -> Union[str, dict[str, Any]]:
 
     if not metrics:
         return "No maintenance data available."
 
     # No category filter -> summary per building
     if category_filter is None:
-        status_totals: Dict[str, int] = {}
+        status_totals: dict[str, int] = {}
 
         for statuses in metrics.values():
             for status, count in (statuses or {}).items():
@@ -566,7 +566,7 @@ def format_job_metrics(
     return "\n".join(lines)
 
 
-def format_request_metrics_summary(metrics: Dict[str, Any], building_name: Optional[str] = None) -> str:
+def format_request_metrics_summary(metrics: dict[str, Any], building_name: Optional[str] = None) -> str:
     agg = aggregate_request_metrics(metrics)
 
     lines = []
@@ -612,7 +612,7 @@ def _display_status(s: str) -> str:
 
 
 def format_multi_building_metrics(
-    building_stats: Dict[str, Dict[str, int]],
+    building_stats: dict[str, dict[str, int]],
     total_buildings: int,
     total_records: int,
     query_type: str,
@@ -663,7 +663,7 @@ def format_multi_building_metrics(
     return "\n".join(lines)
 
 
-def calculate_maintenance_summary(metrics: Dict[str, Dict[str, int]]) -> Dict[str, Any]:
+def calculate_maintenance_summary(metrics: dict[str, dict[str, int]]) -> dict[str, Any]:
     """
     Return totals and completion rate from metrics.
     """
@@ -724,6 +724,23 @@ def filter_maintenance_buildings(
         else:
             return {}
 
+    def _norm_key(k: Any) -> str | None:
+        if isinstance(k, str):
+            return k.strip().lower()
+        return None
+
+    def _find_category_key(metrics_dict: dict, wanted_l: str | None) -> str | None:
+        if not wanted_l:
+            return None
+        for k in metrics_dict.keys():
+            if _norm_key(k) == wanted_l:
+                return k
+        return None
+
+    def _prio_label_matches(priority_label: str, wanted: str) -> bool:
+        pcode, _sla = parse_priority_label(priority_label)
+        return (pcode or "").lower() == wanted
+
     for m in matches:
         md = m.get("metadata", {}) or {}
         raw_metrics = md.get("maintenance_metrics", {})
@@ -741,7 +758,6 @@ def filter_maintenance_buildings(
             continue
 
         # Detect request-shaped metrics (4-level) vs jobs (2-level)
-        is_req = False
         try:
             is_req = is_request_metrics(metrics)
         except Exception:
@@ -750,48 +766,36 @@ def filter_maintenance_buildings(
         # ----------------------------
         # CATEGORY filter
         # ----------------------------
+        cat_key = None
         if category_l:
-            if not any(isinstance(k, str) and k.lower() == category_l for k in metrics.keys()):
+            cat_key = _find_category_key(metrics, category_l)
+            if not cat_key:
                 continue
 
         # ----------------------------
         # PRIORITY filter (requests only)
         # ----------------------------
+
         if priority_norm:
             if not is_req:
                 # priority filter doesn't apply to jobs
                 continue
-            wanted_code = normalise_priority(priority)  # "P3"
-            wanted_code_l = wanted_code.lower() if wanted_code else None
 
-            if not wanted_code_l:
-                continue
-
-            def _prio_label_matches(priority_label: str, wanted=wanted_code_l) -> bool:
-                pcode, _sla = parse_priority_label(priority_label)
-                return (pcode or "").lower() == wanted
-
-            def _has_priority_in_cat(cat_key: str) -> bool:
-                prios = metrics.get(cat_key, {})
+            def _has_priority_in_cat(cat_k: str, metrics_dict: dict) -> bool:
+                prios = metrics_dict.get(cat_k, {})
                 if not isinstance(prios, dict):
                     return False
-                return any(isinstance(p, str) and _prio_label_matches(p) for p in prios.keys())
+                return any(isinstance(p, str) and _prio_label_matches(p, priority_norm) for p in prios.keys())
 
-            if category_l:
-                # find actual category key (preserve original case)
-                cat_key = next(
-                    (k for k in metrics.keys() if isinstance(
-                        k, str) and k.lower() == category_l),
-                    None
-                )
-                if not cat_key or not _has_priority_in_cat(cat_key):
+            if cat_key:
+                if not _has_priority_in_cat(cat_key, metrics):
                     continue
             else:
                 ok = False
-                for cat_key, prios in metrics.items():
-                    if not isinstance(cat_key, str) or not isinstance(prios, dict):
+                for cat_key_iter, prios_iter in metrics.items():
+                    if not isinstance(cat_key_iter, str) or not isinstance(prios_iter, dict):
                         continue
-                    if any(isinstance(p, str) and _prio_label_matches(p) for p in prios.keys()):
+                    if any(isinstance(p, str) and _prio_label_matches(p, priority_norm) for p in prios_iter.keys()):
                         ok = True
                         break
                 if not ok:
@@ -801,58 +805,40 @@ def filter_maintenance_buildings(
         # STATUS filter
         # ----------------------------
         if status_l:
-            #     if is_req:
-            # # Aggregate across full 4-level cube
-            # agg = aggregate_request_metrics(metrics) or {}
-            # by_status = agg.get("by_status", {}) or {}
-            # # Compare case-insensitively
-            # count_for_status = 0
-            # for st, c in by_status.items():
-            #     if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
-            #         count_for_status = c
-            #         break
-            # if count_for_status <= 0:
-            #     continue
             if is_req:
-                # If category filter is present, only count statuses within that category.
-                if category_l:
-                    cat_key = next(
-                        (k for k in metrics.keys() if isinstance(
-                            k, str) and k.lower() == category_l),
-                        None
-                    )
-                    if not cat_key:
+                # Requests: category -> priority -> status -> count
+                def _count_status_in_request_cat(cat_k: str, metrics_dict: dict) -> int:
+                    prios = metrics_dict.get(cat_k, {})
+                    if not isinstance(prios, dict):
+                        return 0
+                    total = 0
+                    for _, statuses in prios.items():
+                        if not isinstance(statuses, dict):
+                            continue
+                        for st, c in statuses.items():
+                            if isinstance(st, str) and st.strip().lower() == status_l and isinstance(c, int):
+                                total += c
+                    return total
+
+                if cat_key:
+                    if _count_status_in_request_cat(cat_key, metrics) <= 0:
                         continue
-
-                    agg = aggregate_request_metrics_by_category(metrics) or {}
-                    cat = (agg.get("by_category", {})
-                           or {}).get(cat_key, {}) or {}
-                    by_status = cat.get("by_status", {}) or {}
                 else:
-                    agg = aggregate_request_metrics(metrics) or {}
-                    by_status = agg.get("by_status", {}) or {}
-
-                # Compare case-insensitively
-                count_for_status = 0
-                for st, c in by_status.items():
-                    if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
-                        count_for_status = c
-                        break
-                if count_for_status <= 0:
-                    continue
-
+                    total = 0
+                    for cat_k in metrics.keys():
+                        if not isinstance(cat_k, str):
+                            continue
+                        total += _count_status_in_request_cat(cat_k, metrics)
+                    if total <= 0:
+                        continue
             else:
                 # Jobs: category -> status -> count
                 total = 0
-                if category_l:
-                    cat_key = next((k for k in metrics.keys() if isinstance(
-                        k, str) and k.lower() == category_l), None)
-                    if not cat_key:
-                        continue
+                if cat_key:
                     statuses = metrics.get(cat_key, {})
                     if isinstance(statuses, dict):
                         for st, c in statuses.items():
-                            if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
+                            if isinstance(st, str) and st.strip().lower() == status_l and isinstance(c, int):
                                 total += c
                     if total <= 0:
                         continue
@@ -861,7 +847,7 @@ def filter_maintenance_buildings(
                         if not isinstance(statuses, dict):
                             continue
                         for st, c in statuses.items():
-                            if isinstance(st, str) and st.lower() == status_l and isinstance(c, int):
+                            if isinstance(st, str) and st.strip().lower() == status_l and isinstance(c, int):
                                 total += c
                     if total <= 0:
                         continue

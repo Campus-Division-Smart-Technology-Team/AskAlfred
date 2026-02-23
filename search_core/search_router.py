@@ -1,7 +1,8 @@
 # search_core/search_router.py
 
-from typing import Any, Dict, List, Tuple, Union, Optional
+from typing import Any, Union, Optional
 from search_instructions import SearchInstructions
+from alfred_exceptions import RoutingError
 
 from .semantic_search import semantic_search
 from .planon_search import planon_search
@@ -14,16 +15,16 @@ from .maintenance_search import maintenance_search
 
 # semantic_search returns:
 #   (results, answer, publication_info, score_too_low)
-SemanticReturn = Tuple[List[Dict[str, Any]], str, str, bool]
+SemanticReturn = tuple[list[dict[str, Any]], str, str, bool]
 
 # planon_search returns:
 #   (results, answer, publication_info)
 # The publication_info is always "" in the current implementation.
-PlanonReturn = Tuple[List[Dict[str, Any]], Optional[str], str]
+PlanonReturn = tuple[list[dict[str, Any]], Optional[str], str]
 
 # maintenance_search returns:
 #   (results, answer)
-MaintenanceReturn = Tuple[List[Dict[str, Any]], Optional[str]]
+MaintenanceReturn = tuple[list[dict[str, Any]], Optional[str]]
 
 # Unified router return type:
 ReturnUnion = Union[SemanticReturn, PlanonReturn, MaintenanceReturn]
@@ -64,4 +65,4 @@ def execute(instr: SearchInstructions) -> ReturnUnion:
         # maintenance_search returns: (results, answer)
         return maintenance_search(instr)
 
-    raise ValueError(f"Unknown search instruction type: {itype}")
+    raise RoutingError(f"Unknown search instruction type: {itype}")

@@ -12,7 +12,7 @@ It is passed through:
 Preprocessors enrich this object; handlers consume it.
 """
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Optional
 from dataclasses import dataclass, field
 import time
 from query_types import QueryType
@@ -45,19 +45,19 @@ class QueryContext:
     query: str
     top_k: int = 10
     building_filter: Optional[str] = None
-    history: Optional[List[Dict[str, Any]]] = None
+    history: Optional[list[dict[str, Any]]] = None
     rolling_summary: Optional[str] = None
 
     # Preprocessor-enriched attributes
     building: Optional[str] = None
-    buildings: List[str] = field(default_factory=list)
-    business_terms: List[Dict[str, Any]] = field(default_factory=list)
+    buildings: list[str] = field(default_factory=list)
+    business_terms: list[dict[str, Any]] = field(default_factory=list)
     document_type: Optional[str] = None
     complexity: Optional[str] = None
     corrected_query: Optional[str] = None
 
     # Internal scratchpad
-    cache: Dict[str, Any] = field(default_factory=dict)
+    cache: dict[str, Any] = field(default_factory=dict)
 
     # Metadata
     created_at: float = field(default_factory=time.time)
@@ -65,9 +65,9 @@ class QueryContext:
     # ML intent (router enrichment)
     predicted_intent: Optional[QueryType] = None
     ml_intent_confidence: float = 0.0
-    routing_notes: List[str] = field(default_factory=list)
+    routing_notes: list[str] = field(default_factory=list)
     # Previous query memory (restored from SessionManager)
-    previous_context: Optional[Dict[str, Any]] = None
+    previous_context: Optional[dict[str, Any]] = None
     previous_intent: Optional[str] = None
     previous_intent_confidence: Optional[float] = None
 

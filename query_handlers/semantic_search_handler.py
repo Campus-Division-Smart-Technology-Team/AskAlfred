@@ -7,12 +7,13 @@ Handles all remaining queries not claimed by other handlers.
 
 import time
 import logging
-from typing import Optional, cast, Tuple, Any, List, Dict
+from typing import Optional, cast, Any
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
 from search_instructions import SearchInstructions
 
+from alfred_exceptions import RoutingError
 import search_core
 from search_core.search_router import execute
 
@@ -157,27 +158,27 @@ class SemanticSearchHandler(BaseQueryHandler):
 
             if instr.type == "semantic":
                 results, answer, pub_info, score_flag = cast(
-                    Tuple[List[Dict[str, Any]], str, str, bool],
+                    tuple[list[dict[str, Any]], str, str, bool],
                     result
                 )
 
             elif instr.type == "planon":
                 results, answer, pub_info = cast(
-                    Tuple[List[Dict[str, Any]], Optional[str], str],
+                    tuple[list[dict[str, Any]], Optional[str], str],
                     result
                 )
                 score_flag = None
 
             elif instr.type == "maintenance":
                 results, answer = cast(
-                    Tuple[List[Dict[str, Any]], Optional[str]],
+                    tuple[list[dict[str, Any]], Optional[str]],
                     result
                 )
                 pub_info = None
                 score_flag = None
 
             else:
-                raise ValueError(
+                raise RoutingError(
                     f"Unknown search instruction type: {instr.type}")
 
             elapsed = round(time.time() - start, 3)

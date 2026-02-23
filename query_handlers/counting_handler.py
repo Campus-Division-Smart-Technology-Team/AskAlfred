@@ -7,18 +7,19 @@ and avoids overlap with maintenance, ranking, or property-condition routing.
 """
 
 import re
+# First party import
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
-
-from .base_handler import BaseQueryHandler
-
 from structured_queries import (
     is_counting_query,
     is_maintenance_query,
     is_ranking_query,
     is_property_condition_query,
+    generate_counting_answer,
 )
+# Local import
+from .base_handler import BaseQueryHandler
 
 
 class CountingHandler(BaseQueryHandler):
@@ -69,8 +70,6 @@ class CountingHandler(BaseQueryHandler):
         query_text = context.query.strip()
 
         try:
-            from structured_queries import generate_counting_answer
-
             answer = generate_counting_answer(query_text)
 
             if not answer:
@@ -89,7 +88,7 @@ class CountingHandler(BaseQueryHandler):
             )
 
         except Exception as e:
-            self.logger.error(f"Counting handler error: {e}", exc_info=True)
+            self.logger.error("Counting handler error: %s", e, exc_info=True)
 
             return QueryResult(
                 query=query_text,

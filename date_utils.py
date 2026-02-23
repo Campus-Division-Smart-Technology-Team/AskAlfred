@@ -7,12 +7,14 @@ Optimised version with pre-compiled patterns and better validation.
 
 import re
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any
+from datetime import datetime, date
+from typing import Optional, Any
 
-from pinecone_utils import normalise_matches
-from config import DEFAULT_NAMESPACE, DIMENSION
+from pinecone_utils import normalise_matches, vector_query
+from config import DIMENSION, DEFAULT_EMBED_MODEL
 
+
+logger = logging.getLogger(__name__)
 # ============================================================================
 # CONSTANTS
 # ============================================================================
@@ -54,13 +56,15 @@ DATE_FORMATS = [
 # Helper function to build common pattern groups
 
 
-def _build_label_pattern(labels: List[str], date_format: str) -> str:
+def _build_label_pattern(labels: list[str], date_format: str) -> str:
     """Build a regex pattern for labeled dates."""
     label_group = '|'.join(labels)
-    return f'(?:{label_group})[:\s]+({date_format})'
+    return f'(?:{label_group})[:\\s]+({date_format})'
 
 
-# Date format components
+# ============================================================================
+# DATE FORMAT REGEX COMPONENTS
+# ============================================================================
 DATE_TEXT = r'[0-3]?[0-9][\s][A-Z][a-z]+[\s][0-9]{{4}}'
 DATE_TEXT_FLEX = r'[0-3]?[0-9][\s/][A-Za-z]{{3,9}}[\s/][0-9]{{4}}'
 DATE_NUMERIC = r'[0-3]?[0-9][\s/.-][0-3]?[0-9][\s/.-][0-9]{{4}}'
@@ -70,33 +74,38 @@ DATE_DOT_YMD = r'[0-9]{{4}}\.[0-1]?[0-9]\.[0-3]?[0-9]'
 DATE_ISO = r'[0-9]{{4}}[/-][0-1]?[0-9][/-][0-3]?[0-9]'
 YEAR_ONLY = r'[0-9]{{4}}'
 DATE_TEXT_ORDINAL = r'[0-3]?[0-9](?:st|nd|rd|th)?[\s][A-Z][a-z]+[\s][0-9]{4}'
+
 # IMPROVED: More flexible pattern for "August 2024", "Aug 2024", etc.
 DATE_MONTH_YEAR_FLEX = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}'
 
 # Pre-compiled date patterns with priorities
+
+# ============================================================================
+# PRIORITY-ORDERED DATE PATTERNS
+# ============================================================================
 DATE_PATTERNS = [
     # Highest priority: Explicitly labeled dates
-    (re.compile(_build_label_pattern(['Last\s+Updated', 'Last\s+Revised', 'Date\s+Updated',
-     'Date\s+Revised'], DATE_TEXT_ORDINAL), re.IGNORECASE), 'labeled_updated', 15),
-    (re.compile(_build_label_pattern(['Last\s+Updated', 'Last\s+Revised', 'Date\s+Updated',
-     'Date\s+Revised'], DATE_NUMERIC), re.IGNORECASE), 'labeled_updated_numeric', 15),
-    (re.compile(_build_label_pattern(['Last\s+Updated', 'Last\s+Revised', 'Date\s+Updated',
-     'Date\s+Revised'], DATE_MONTH_YEAR_FLEX), re.IGNORECASE), 'labeled_updated_month_year', 15),
+    (re.compile(_build_label_pattern([r'Last\s+Updated', r'Last\s+Revised', r'Date\s+Updated',
+     r'Date\s+Revised'], DATE_TEXT_ORDINAL), re.IGNORECASE), 'labeled_updated', 15),
+    (re.compile(_build_label_pattern([r'Last\s+Updated', r'Last\s+Revised', r'Date\s+Updated',
+     r'Date\s+Revised'], DATE_NUMERIC), re.IGNORECASE), 'labeled_updated_numeric', 15),
+    (re.compile(_build_label_pattern([r'Last\s+Updated', r'Last\s+Revised', r'Date\s+Updated',
+     r'Date\s+Revised'], DATE_MONTH_YEAR_FLEX), re.IGNORECASE), 'labeled_updated_month_year', 15),
 
     # Document header patterns
-    (re.compile(_build_label_pattern(['Document\s+Date', 'Issue\s+Date',
-                                      'Date\s+of\s+fire\s+risk\s+assessment', 'Effective\s+Date'], DATE_TEXT_ORDINAL), re.IGNORECASE), 'doc_header', 14),
-    (re.compile(_build_label_pattern(['Document\s+Date', 'Issue\s+Date',
-                                      'Date\s+of\s+fire\s+risk\s+assessment', 'Effective\s+Date'], DATE_MONTH_YEAR_FLEX), re.IGNORECASE), 'doc_header_month_year', 14),
+    (re.compile(_build_label_pattern([r'Document\s+Date', r'Issue\s+Date',
+                                      r'Date\s+of\s+fire\s+risk\s+assessment', r'Effective\s+Date'], DATE_TEXT_ORDINAL), re.IGNORECASE), 'doc_header', 14),
+    (re.compile(_build_label_pattern([r'Document\s+Date', r'Issue\s+Date',
+                                      r'Date\s+of\s+fire\s+risk\s+assessment', r'Effective\s+Date'], DATE_MONTH_YEAR_FLEX), re.IGNORECASE), 'doc_header_month_year', 14),
     (re.compile(
         r'(?:Version|Rev\.?\s+|Revision)[:\s]*([0-9]{1,2}[\s/.-][A-Z][a-z]{2}[\s/.-][0-9]{4})', re.IGNORECASE), 'version_date', 13),
 
     # General labeled dates
-    (re.compile(_build_label_pattern(['Updated', 'Revised', 'Review\s+Date', 'Publication\s+Date',
+    (re.compile(_build_label_pattern(['Updated', 'Revised', r'Review\s+Date', r'Publication\s+Date',
      'Published'], DATE_TEXT_ORDINAL), re.IGNORECASE), 'labeled_general', 12),
     (re.compile(_build_label_pattern(
         ['Updated', 'Revised'], DATE_NUMERIC), re.IGNORECASE), 'labeled_general_numeric', 12),
-    (re.compile(_build_label_pattern(['Updated', 'Revised', 'Review\s+Date', 'Publication\s+Date',
+    (re.compile(_build_label_pattern(['Updated', 'Revised', r'Review\s+Date', r'Publication\s+Date',
      'Published'], DATE_MONTH_YEAR_FLEX), re.IGNORECASE), 'labeled_general_month_year', 12),
 
     # Standard text dates (with ordinals)
@@ -124,6 +133,14 @@ DATE_PATTERNS = [
     (re.compile(
         rf'(?:Rev\.?\s*|Version\s+)[:\s]*({YEAR_ONLY})', re.IGNORECASE), 'version_year', 3),
 ]
+PLANON_DATE_PATTERNS = [
+    re.compile(
+        r'Property condition assessment date[:\s]+([0-9]{2}\s+[A-Za-z]+\s+[0-9]{4})', re.IGNORECASE),
+    re.compile(
+        r'condition assessment date[:\s]+([0-9]{2}\s+[A-Za-z]+\s+[0-9]{4})', re.IGNORECASE),
+    re.compile(
+        r'assessment date[:\s]+([0-9]{2}\s+[A-Za-z]+\s+[0-9]{4})', re.IGNORECASE),
+]
 
 # Quick patterns for single-result extraction (pre-compiled)
 QUICK_DATE_PATTERNS = [
@@ -138,7 +155,8 @@ QUICK_DATE_PATTERNS = [
     re.compile(rf'\b({DATE_TEXT})\b', re.IGNORECASE),
     re.compile(rf'\b({DATE_MONTH_YEAR_FLEX})\b', re.IGNORECASE),
 ]
-
+DATE_FIELDS_PRIORITY = ['review_date', 'updated',
+                        'revised', 'date', 'document_date']
 
 # ============================================================================
 # DATE PARSING
@@ -222,7 +240,7 @@ def is_valid_date(parsed_date: datetime) -> bool:
 # ============================================================================
 
 
-def extract_date_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
+def extract_date_from_metadata(metadata: dict[str, Any]) -> Optional[str]:
     """
     Extract date from metadata fields in priority order.
 
@@ -250,7 +268,7 @@ def extract_date_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
 # ============================================================================
 
 
-def extract_dates_from_text(text: str) -> List[Tuple[datetime, str, str, int]]:
+def extract_dates_from_text(text: str) -> list[tuple[datetime, str, str, int]]:
     """
     Extract all dates from text using pre-compiled patterns.
 
@@ -285,12 +303,11 @@ def extract_dates_from_text(text: str) -> List[Tuple[datetime, str, str, int]]:
 # COMPREHENSIVE DATE SEARCH
 # ============================================================================
 
-
 def search_source_for_latest_date(
-    idx,
+    idx: Any,
     key_value: str,
     namespace: Optional[str] = None
-) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+) -> tuple[Optional[str], list[dict[str, Any]]]:
     """
     Search for all chunks/documents with the same key and find the latest date.
 
@@ -359,7 +376,7 @@ def search_source_for_latest_date(
         all_dates.sort(key=lambda x: (-x[4], -x[0].timestamp()))
 
         # Get the best date
-        latest_date_obj, latest_date_str, doc_id, source_type, priority = all_dates[0]
+        latest_date_str, doc_id, source_type, priority = all_dates[0]
 
         logging.info(
             "Selected date: '%s' (source: %s, priority: %d, from: %s)",
@@ -382,7 +399,7 @@ def search_source_for_latest_date(
         return None, []
 
 
-def _fetch_document_chunks(idx, key_value: str, namespace: Optional[str]) -> List[Dict[str, Any]]:
+def _fetch_document_chunks(idx, key_value: str, namespace: Optional[str]) -> list[dict[str, Any]]:
     """
     Fetch all chunks for a document using metadata filtering or semantic search.
 
@@ -423,9 +440,6 @@ def _fetch_document_chunks(idx, key_value: str, namespace: Optional[str]) -> Lis
     # Strategy 2: Semantic search fallback
     logging.debug("Falling back to semantic search...")
 
-    from pinecone_utils import vector_query
-    from config import DEFAULT_EMBED_MODEL
-
     try:
         raw = vector_query(idx, namespace, key_value, 50, DEFAULT_EMBED_MODEL)
     except Exception:  # pylint: disable=broad-except
@@ -450,7 +464,7 @@ def _fetch_document_chunks(idx, key_value: str, namespace: Optional[str]) -> Lis
 # ============================================================================
 
 
-def extract_date_from_single_result(result: Dict[str, Any]) -> Optional[str]:
+def extract_date_from_single_result(result: dict[str, Any]) -> Optional[str]:
     """
     Extract date from a single search result without additional searches.
     Quick fallback when full document search is not needed.
@@ -484,3 +498,70 @@ def extract_date_from_single_result(result: Dict[str, Any]) -> Optional[str]:
     except Exception as e:  # pylint: disable=broad-except
         logging.warning("Error extracting date from single result: %s", e)
         return None
+
+# ============================================================================
+# FRA DATE PARSERS
+# ============================================================================
+
+
+def parse_date_to_iso(date_str: Optional[str]) -> Optional[str]:
+    """
+    Parse a human-readable date string into an ISO-8601 date string (YYYY-MM-DD).
+
+    Examples:
+        "16 January 2026" -> "2026-01-16"
+        "September 2026"  -> "2026-09-01"
+        "12/06/2025"      -> "2025-06-12"
+
+    Returns None if the date cannot be parsed.
+    """
+    if not date_str:
+        return None
+
+    try:
+        parsed = parse_date_string(date_str)
+        if not parsed:
+            return None
+        if parsed == datetime.min:
+            return None
+
+        # parse_date_string may return datetime or date
+        if isinstance(parsed, datetime):
+            parsed = parsed.date()
+
+        return parsed.isoformat()
+
+    except Exception as exc:
+        logger.warning("Failed to parse date string '%s': %s", date_str, exc)
+        return None
+
+
+def parse_iso_date(value: Any) -> Optional[date]:
+    """
+    Parse an ISO date-like value into a date object.
+
+    Accepts:
+        - date
+        - datetime
+        - ISO date string (YYYY-MM-DD)
+
+    Returns None if parsing fails.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+
+    if isinstance(value, datetime):
+        return value.date()
+
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            logger.warning("Invalid ISO date string: %s", value)
+            return None
+
+    logger.warning("Unsupported date value type: %s", type(value))
+    return None

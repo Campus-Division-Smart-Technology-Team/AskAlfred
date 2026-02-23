@@ -33,4 +33,6 @@ planon_data_*.json
 Alfred/
 *.csv
 
-*.jsonl
+
+# metrics
+#*.prom

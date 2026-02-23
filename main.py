@@ -6,11 +6,12 @@ With dynamic building cache initialisation across all indexes.
 """
 import os
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Optional
 from pathlib import Path
 import zipfile
 import time
 import streamlit as st
+from openai import OpenAI
 from ui_components import (
     setup_page_config, render_custom_css, render_header, render_tabs,
     render_sidebar, display_publication_date_info,
@@ -18,11 +19,20 @@ from ui_components import (
 )
 from search_core.search_router import execute
 from search_instructions import SearchInstructions
-from building_utils import (
+from building.utils import (
     populate_building_cache_from_multiple_indexes, get_cache_status,
     extract_building_from_query,
 )
-from config import TARGET_INDEXES, DEFAULT_NAMESPACE, USE_QUERY_MANAGER
+from config import (
+    TARGET_INDEXES,
+    DEFAULT_NAMESPACE,
+    USE_QUERY_MANAGER,
+    QUERY_MIN_LENGTH,
+    QUERY_MAX_LENGTH,
+    UI_SNIPPET_MAX_CHARS,
+    UI_SUMMARY_MAX_TOKENS,
+    UI_RECENT_TURNS_FOR_SUMMARY,
+)
 from emojis import (EMOJI_GORILLA, EMOJI_CAUTION,
                     EMOJI_BOOKS, EMOJI_MEDAL, EMOJI_TIME)
 from query_manager import QueryManager
@@ -45,14 +55,28 @@ if MODEL_ZIP.exists() and not MODEL_DIR.exists():
 
 os.environ["STREAMLIT_LOG_LEVEL"] = "info"  # ensure Streamlit honours INFO
 
+
+class ContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "category"):
+            record.category = "Uncategorized"
+        if not hasattr(record, "file_key"):
+            record.file_key = "-"
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s [%(category)s] [%(file_key)s]: %(message)s",
     handlers=[logging.StreamHandler()]
 )
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
+context_filter = ContextFilter()
+root_logger.addFilter(context_filter)
+for handler in root_logger.handlers:
+    handler.addFilter(context_filter)
 
 # Silence noisy libraries
 for n in ("torch", "torch._dynamo", "torch._subclasses.fake_tensor"):
@@ -62,10 +86,10 @@ for n in ("torch", "torch._dynamo", "torch._subclasses.fake_tensor"):
 
 
 # Ensure all loggers propagate properly
-# Access manager/loggerDict defensively to satisfy static checkers and avoid attribute errors.
+# Access manager/loggerdict defensively to satisfy static checkers and avoid attribute errors.
 # _root = getattr(logging, "root", None)
 # _manager = getattr(_root, "manager", None) if _root is not None else None
-# _logger_dict = getattr(_manager, "loggerDict", None)
+# _logger_dict = getattr(_manager, "loggerdict", None)
 
 # if isinstance(_logger_dict, dict):
 #     for name in list(_logger_dict.keys()):
@@ -88,8 +112,8 @@ ERROR_MESSAGE_TEMPLATE = "Sorry, I encountered an error while searching: {error}
 SEARCH_SPINNER_TEXT = "Searching across indexes and analysing document dates..."
 
 # Input validation
-MAX_QUERY_LENGTH = 1000
-MIN_QUERY_LENGTH = 2
+MAX_QUERY_LENGTH = QUERY_MAX_LENGTH
+MIN_QUERY_LENGTH = QUERY_MIN_LENGTH
 
 
 # ============================================================================
@@ -104,7 +128,7 @@ def initialise_building_cache():
     IMPROVED: Tries all indexes and aggregates results.
 
     Returns:
-        Dictionary with cache status
+        dictionary with cache status
     """
     t0 = time.time()
     elapsed = 0
@@ -298,10 +322,10 @@ def validate_query(query: str) -> tuple[bool, Optional[str]]:
 
 
 def render_result_item(
-    result: Dict[str, Any],
+    result: dict[str, Any],
     index: int,
     is_top: bool = False,
-    max_snippet_length: int = 500
+    max_snippet_length: int = UI_SNIPPET_MAX_CHARS
 ):
     """
     Render a single search result item.
@@ -409,8 +433,8 @@ def display_system_status():
                     st.write(f"- {qtype}: {data['count']} queries")
 
                 st.markdown("**Handlers:**")
-                for handler, data in stats["handlers"].items():
-                    st.write(f"- {handler}: {data['count']} uses")
+                for handler_name, data in stats["handlers"].items():
+                    st.write(f"- {handler_name}: {data['count']} uses")
 
 
 def handle_direct_response(response: str):
@@ -430,16 +454,17 @@ def safe_execute(instr: SearchInstructions) -> tuple[list[dict[str, Any]], str, 
 
     # Semantic: 4 items
     if len(raw) == 4:
-        return raw
+        results, answer, pub_info, score_too_low = raw
+        return results, answer or "", pub_info or "", score_too_low
 
     # Planon: (results, answer, publication_date_info)
     if len(raw) == 3:
-        results, answer, pub_info = raw
+        results, answer, pub_info = raw  # pylint: disable=unbalanced-tuple-unpacking
         return results, answer or "", pub_info or "", False
 
     # Maintenance: (results, answer)
     if len(raw) == 2:
-        results, answer = raw
+        results, answer = raw  # pylint: disable=unbalanced-tuple-unpacking
         return results, answer or "", "", False
 
     # Fallback (should never happen)
@@ -484,7 +509,7 @@ def handle_no_results():
     })
 
 
-def handle_low_score_results(answer: str, results: List[Dict[str, Any]]):
+def handle_low_score_results(answer: str, results: list[dict[str, Any]]):
     """Handle case when results have scores below threshold."""
     st.markdown(answer)
     display_low_score_warning()
@@ -499,7 +524,7 @@ def handle_low_score_results(answer: str, results: List[Dict[str, Any]]):
 
 def handle_successful_results(
     answer: str,
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     publication_date_info: str
 ):
     """Handle successful search results."""
@@ -535,7 +560,7 @@ def handle_search_error(error: Exception):  # pylint: disable=broad-except
     })
 
 
-def display_direct_results(results: List[Dict[str, Any]], publication_date_info: str):
+def display_direct_results(results: list[dict[str, Any]], publication_date_info: str):
     """Display search results directly when no LLM answer is generated."""
     response = f"I found {len(results)} relevant results:"
     st.markdown(response)
@@ -585,7 +610,8 @@ def update_conversation_summary():
         # not enough context yet
         return
 
-    last_turns = st.session_state.messages[-4:]  # last few messages
+    # last few messages
+    last_turns = st.session_state.messages[-UI_RECENT_TURNS_FOR_SUMMARY:]
     formatted = "\n".join(
         f"{m['role']}: {m['content']}" for m in last_turns)
 
@@ -599,8 +625,6 @@ Here are the last few dialogue turns:
 
 Please produce an updated, concise summary that preserves all facts.
 """
-
-    from openai import OpenAI
     client = OpenAI()
 
     try:
@@ -608,7 +632,7 @@ Please produce an updated, concise summary that preserves all facts.
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": "You summarise conversations."},
                       {"role": "user", "content": combined_prompt}],
-            max_tokens=150,
+            max_tokens=UI_SUMMARY_MAX_TOKENS,
         )
         content = response.choices[0].message.content
         st.session_state.summary = content.strip() if content else ""

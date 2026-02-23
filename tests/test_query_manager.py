@@ -1,12 +1,12 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
-Test suite for Query Manager
+Tests for the Query Manager, 
+ensuring correct routing of queries to handlers and backward compatibility of results.
 """
 
 import pytest
 from query_types import QueryType
-from query_manager import QueryManager
+from query_manager import QueryManager, process_query_unified
 
 
 # Test queries with expected routing
@@ -54,7 +54,8 @@ class TestQueryManager:
             f"expected {expected_type.value}"
         )
         assert result.success, f"Query failed: {result.metadata.get('error')}"
-        assert len(result.answer) > 0, "Empty answer returned"
+        assert result.answer is not None and len(
+            result.answer) > 0, "Empty answer returned"
 
     def test_conversational_responses(self):
         """Test conversational handler returns appropriate responses."""
@@ -62,8 +63,8 @@ class TestQueryManager:
 
         for greeting in greetings:
             result = self.manager.process_query(greeting)
-            assert "Alfred" in result.answer
-            assert "help" in result.answer.lower()
+            assert result.answer is not None and "Alfred" in result.answer
+            assert result.answer is not None and "help" in result.answer.lower()
 
     def test_error_handling(self):
         """Test error handling for edge cases."""
@@ -88,7 +89,7 @@ class TestQueryManager:
         # Check stats
         stats = self.manager.get_statistics()
         assert stats['total_queries'] == len(queries)
-        assert len(stats['by_type']) > 0
+        assert len(stats['query_types']) > 0
         assert stats['avg_time_ms'] > 0
 
 
@@ -97,7 +98,6 @@ class TestBackwardCompatibility:
 
     def test_result_format(self):
         """Test QueryResult has all expected fields."""
-        from query_manager import process_query_unified
 
         query = "What is the BMS configuration?"
         results, answer, pub_date, score_low = process_query_unified(query)

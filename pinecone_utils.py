@@ -4,13 +4,14 @@
 Pinecone utilities for index management and search operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
+import json
 import logging
 from clients import get_pc, get_oai
 from config import normalise_ns
 
 
-def list_index_names() -> List[str]:
+def list_index_names() -> list[str]:
     """Get list of available Pinecone index names."""
     try:
         pc = get_pc()
@@ -30,7 +31,7 @@ def open_index(name: str):
     return pc.Index(name)
 
 
-def list_namespaces_for_index(idx) -> List[Optional[str]]:
+def list_namespaces_for_index(idx) -> list[Optional[str]]:
     """
     Return available namespaces for an index.
     None represents the default namespace.
@@ -60,14 +61,14 @@ def list_namespaces_for_index(idx) -> List[Optional[str]]:
         return [None]
 
 
-def embed_texts(texts: List[str], model: str) -> List[List[float]]:
+def embed_texts(texts: list[str], model: str) -> list[list[float]]:
     """Generate embeddings for a list of texts using OpenAI."""
     oai = get_oai()
     res = oai.embeddings.create(model=model, input=texts)
     return [d.embedding for d in res.data]
 
 
-def vector_query(idx, namespace: Optional[str], query: str, k: int, embed_model: str, metadata_filter: Optional[dict] = None) -> Dict[str, Any]:
+def vector_query(idx: Any, namespace: Optional[str], query: str, k: int, embed_model: str, metadata_filter: Optional[dict] = None) -> dict[str, Any]:
     """
     Perform vector search using client-side embeddings.
 
@@ -102,13 +103,13 @@ def vector_query(idx, namespace: Optional[str], query: str, k: int, embed_model:
 
 
 def query_all_chunks(
-    index,
+    index: Any,
     namespace: Optional[str],
-    query_vector: List[float],
-    filter_dict: Optional[Dict[str, Any]] = None,
+    query_vector: list[float],
+    filter_dict: Optional[dict[str, Any]] = None,
     top_k: int = 1000,
     include_metadata: bool = True,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Query Pinecone index and return all matches.
 
@@ -124,7 +125,7 @@ def query_all_chunks(
         include_metadata: Whether to include metadata in results
 
     Returns:
-        List of match dictionaries with id, score, and metadata
+        list of match dictionaries with id, score, and metadata
     """
     try:
         # Build query parameters
@@ -167,15 +168,15 @@ def query_all_chunks(
                 }
             results.append(match_dict)
 
-        logging.info(f"Retrieved {len(results)} matches from index")
+        logging.info("Retrieved %d matches from index", len(results))
         return results
 
     except Exception as e:
-        logging.error(f"Error in query_all_chunks: {e}")
+        logging.error("Error in query_all_chunks: %s", e)
         return []
 
 
-def _as_dict(obj: Any) -> Dict[str, Any]:
+def _as_dict(obj: Any) -> dict[str, Any]:
     """Convert object to dictionary if possible, else return empty dict."""
     to_dict = getattr(obj, "to_dict", None)
     if callable(to_dict):
@@ -203,14 +204,37 @@ def safe_metadata(m):
     return {}
 
 
-def normalise_matches(raw: Any) -> List[Dict[str, Any]]:
+NULL_SENTINEL = "__null__"
+
+
+def desanitise_metadata_from_pinecone(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Convert Pinecone-safe sentinel values back to None."""
+    clean: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if value == NULL_SENTINEL:
+            clean[key] = None
+            continue
+        if isinstance(value, list):
+            items = []
+            for item in value:
+                if item == NULL_SENTINEL:
+                    items.append(None)
+                else:
+                    items.append(item)
+            clean[key] = items
+            continue
+        clean[key] = value
+    return clean
+
+
+def normalise_matches(raw: Any) -> list[dict[str, Any]]:
     """Normalise Pinecone results from either `matches` or `result.hits` shapes."""
     data = _as_dict(raw)
 
     if isinstance(data, dict) and isinstance(data.get("matches"), list):
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for m in data["matches"]:
-            md = safe_metadata(m)
+            md = desanitise_metadata_from_pinecone(safe_metadata(m))
             out.append({
                 "id": m.get("id"),
                 "score": m.get("score"),
@@ -229,7 +253,9 @@ def normalise_matches(raw: Any) -> List[Dict[str, Any]]:
     if isinstance(hits, list) and hits:
         out = []
         for h in hits:
-            fields = h.get("fields") or h.get("metadata") or {}
+            fields = desanitise_metadata_from_pinecone(
+                h.get("fields") or h.get("metadata") or {}
+            )
             text_val = fields.get("text") or fields.get(
                 "content") or fields.get("chunk") or fields.get("body") or ""
             out.append({
@@ -244,3 +270,35 @@ def normalise_matches(raw: Any) -> List[Dict[str, Any]]:
         return out
 
     return []
+
+
+def sanitise_metadata_for_pinecone(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize metadata to Pinecone-compatible types."""
+    clean: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if value is None:
+            clean[key] = NULL_SENTINEL
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            clean[key] = value
+            continue
+        if isinstance(value, list):
+            items = []
+            for item in value:
+                if item is None:
+                    items.append(NULL_SENTINEL)
+                    continue
+                if isinstance(item, str):
+                    items.append(item)
+                else:
+                    items.append(str(item))
+            clean[key] = items
+            continue
+        if isinstance(value, dict):
+            try:
+                clean[key] = json.dumps(value, ensure_ascii=False)
+            except (TypeError, ValueError):
+                clean[key] = str(value)
+            continue
+        clean[key] = str(value)
+    return clean

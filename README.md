@@ -110,9 +110,9 @@ Alfred's architecture follows a **modular, layered design**:
 | → `planon_search.py` | Handles property and Planon-related structured queries. |
 | → `maintenance_search.py` | Handles structured maintenance vector lookups. |
 | → `search_utils.py` | Core utilities for boosting, deduplication, and building filters. |
-| **`building_utils.py`** | Comprehensive building cache, alias, and fuzzy matching utilities (centralised). |
+| **`building/utils.py`** | Comprehensive building cache, alias, and fuzzy matching utilities (centralised). |
 | **`structured_queries.py`** | Rule-based structured detection for counting, ranking, maintenance, and property queries. |
-| **`config.py`** | Global environment, API keys, and Pinecone/OpenAI configuration. |
+| **`config/config.py`** | Global environment, API keys, and Pinecone/OpenAI configuration. |
 
 ---
 
@@ -169,7 +169,7 @@ results, answer, pub_date, score_flag = execute(SearchInstructions(
 
 ## 🗝️ Building Cache & Matching
 
-`building_utils.py` serves as the single source of truth for:
+`building/utils.py` serves as the single source of truth for:
 
 - Alias and canonical name mapping  
 - Multi-index cache population  
@@ -194,6 +194,34 @@ Building cache initialisation runs at app startup, ensuring that all fuzzy and a
 
 ---
 
+## 🔧 Ingestion Updates (V3)
+
+Recent ingestion changes focus on reliability, idempotency, and observability:
+
+**Core changes**
+- **Interfaces layer** for ingestion ports (`VectorStore`, `Embedder`, `EventSink`, `IngestFileRegistry`, `JobRegistry`).
+- **Redis-backed registries** for files and jobs, with status/TTL handling and atomic lease semantics.
+- **File state machine** with explicit states: discovered → processing → upserted → verified → success/failed.
+- **Tokenized processing**: each file run gets a `processing_token` enforced in registry state transitions.
+- **VectorStore abstraction** wraps Pinecone calls and normalises error handling.
+- **Embedder wrapper** owns retries/backoff/batch splitting and returns explicit index → embedding/error mappings.
+- **Unified upsert scheduling** via `VectorWriteCoordinator` (inline or worker strategy).
+- **Verification paths** use the VectorStore abstraction; failures emit structured events.
+
+**Metrics & events**
+- Prometheus counters for embedding retries, batch reductions, rate limits, upsert timing, lock contention, rollback failures, and FRA supersession update outcomes (bulk vs per-item success/failure).
+- JSONL event sink for ingestion summaries and verification alerts.
+
+**Timeouts & safety**
+- Configurable OpenAI timeouts (total + connect/read/write/pool) and per-file max wall-clock.
+- Queue draining and failed-state recording on worker stop events.
+
+**Redis**
+- File records stored as **hashes** (not JSON blobs) with TTLs based on status.
+- Job records use SETNX-style semantics to avoid duplicate supersession runs.
+
+---
+
 ## 🧰 Developer Guide
 
 ### Environment Setup
@@ -208,9 +236,19 @@ streamlit run main.py
 ```
 OPENAI_API_KEY=your_openai_key
 PINECONE_API_KEY=your_pinecone_key
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_USERNAME=optional
+REDIS_PASSWORD=optional
 ANSWER_MODEL=gpt-4o-mini
 DEFAULT_EMBED_MODEL=text-embedding-3-small
 LOG_LEVEL=INFO
+OPENAI_TIMEOUT=120
+OPENAI_CONNECT_TIMEOUT=10
+OPENAI_READ_TIMEOUT=60
+OPENAI_WRITE_TIMEOUT=60
+OPENAI_POOL_TIMEOUT=30
+MAX_FILE_SECONDS=900
 ```
 
 ### Key Dependencies
@@ -276,3 +314,5 @@ The NLPIntentClassifier expects:
 
 Internal use only — University of Bristol Smart Technology Team  
 © 2025 University of Bristol
+
+

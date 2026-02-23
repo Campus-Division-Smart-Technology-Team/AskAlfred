@@ -8,18 +8,18 @@ Delegates logic to counting_queries.generate_property_condition_answer.
 """
 
 import re
+# First party import
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
-
-
 from structured_queries import (
     is_property_condition_query,
     is_maintenance_query,
     is_ranking_query,
     is_counting_query,
+    generate_property_condition_answer
 )
-
+# Local import
 from .base_handler import BaseQueryHandler
 
 
@@ -69,7 +69,7 @@ class PropertyHandler(BaseQueryHandler):
         """
 
         q = context.query.strip().lower()
-        self.logger.info(f"🔍 Checking PropertyHandler for: {q}")
+        self.logger.info("🔍 Checking PropertyHandler for: %s", q)
 
         # Avoid overlap with other handlers
         if is_maintenance_query(q):
@@ -102,8 +102,6 @@ class PropertyHandler(BaseQueryHandler):
         query_text = context.query.strip()
 
         try:
-            from structured_queries import generate_property_condition_answer
-
             answer = generate_property_condition_answer(query_text)
 
             if not answer:
@@ -122,7 +120,7 @@ class PropertyHandler(BaseQueryHandler):
             )
 
         except Exception as e:
-            self.logger.error(f"Property handler error: {e}", exc_info=True)
+            self.logger.error("Property handler error: %s", e, exc_info=True)
 
             return QueryResult(
                 query=query_text,

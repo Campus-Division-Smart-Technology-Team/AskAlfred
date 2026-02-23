@@ -10,9 +10,11 @@ Usage:
 import json
 import sys
 import csv
-from collections import defaultdict, Counter
+from collections import Counter
 from pathlib import Path
-from typing import Dict, List
+
+
+from config import BUILDING_REVIEW_FILENAME_MIN_CONFIDENCE, BUILDING_REVIEW_TEXT_MIN_CONFIDENCE
 
 
 def load_events(path: Path):
@@ -30,7 +32,7 @@ def load_events(path: Path):
     return events
 
 
-def analyse(events: List[dict]) -> dict:
+def analyse(events: list[dict]) -> dict:
     """Analyse building assignment quality."""
     results = {
         "total": len(events),
@@ -57,9 +59,9 @@ def analyse(events: List[dict]) -> dict:
         if flag:
             results["flagged"].append(ev)
 
-        if src == "filename" and conf < 0.75:
+        if src == "filename" and conf < BUILDING_REVIEW_FILENAME_MIN_CONFIDENCE:
             results["low_confidence"].append(ev)
-        if src == "text" and conf < 0.70:
+        if src == "text" and conf < BUILDING_REVIEW_TEXT_MIN_CONFIDENCE:
             results["low_confidence"].append(ev)
 
     return results

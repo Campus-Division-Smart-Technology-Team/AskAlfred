@@ -5,7 +5,7 @@ Search utils
 """
 from __future__ import annotations
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Optional, Any
 
 from config import (
     TARGET_INDEXES,
@@ -19,7 +19,7 @@ from pinecone_utils import (
     normalise_matches
 )
 
-from building_utils import (
+from building.utils import (
     create_building_metadata_filter,
     filter_results_by_building,
     result_matches_building
@@ -49,7 +49,7 @@ BUILDING_BOOST_FACTOR = 2.0  # 2x boost for correct building
 # ============================================================================
 
 
-def _namespaces_to_search(idx) -> List[Optional[str]]:
+def _namespaces_to_search(idx) -> list[Optional[str]]:
     """
     Get namespaces to search for given index.
     Returns list that may contain None for default namespace.
@@ -59,7 +59,7 @@ def _namespaces_to_search(idx) -> List[Optional[str]]:
         logging.debug("Using default namespace for index %s", idx)
         return [None]
     try:
-        namespaces: List[Optional[str]] = list_namespaces_for_index(idx)
+        namespaces: list[Optional[str]] = list_namespaces_for_index(idx)
         # If no namespaces found, use default
         if not namespaces:
             return [None]
@@ -68,7 +68,7 @@ def _namespaces_to_search(idx) -> List[Optional[str]]:
         return [None]
 
 
-def get_doc_type(hit: Dict[str, Any]) -> str:
+def get_doc_type(hit: dict[str, Any]) -> str:
     """
     Extract document type from hit consistently.
     Checks both metadata and top-level fields.
@@ -88,7 +88,7 @@ def search_one_index(
     k: int = 10,
     embed_model: Optional[str] = None,
     building_filter: Optional[str] = None
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Search a single index with building-aware filtering.
     """
@@ -158,17 +158,17 @@ def search_one_index(
     return all_hits
 
 
-def get_effective_score(result: Dict[str, Any]) -> float:
+def get_effective_score(result: dict[str, Any]) -> float:
     """Get effective score from result (boosted or original)."""
     return result.get('boosted_score', result.get('score', 0.0))
 
 
-def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def deduplicate_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Remove duplicate results based on ID, keeping highest score.
 
     Args:
-        results: List of search results
+        results: list of search results
 
     Returns:
         Deduplicated results
@@ -189,10 +189,10 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def apply_doc_type_boost(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     target_doc_type: str,
     boost_factor: float = DOC_TYPE_BOOST_FACTOR
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Apply score boost to results matching target document type.
 
@@ -215,10 +215,10 @@ def apply_doc_type_boost(
 
 
 def apply_building_boost(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     target_building: str,
     boost_factor: float = BUILDING_BOOST_FACTOR
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Apply score boost to results matching target building.
     IMPROVED: Uses fuzzy matching for building comparison.
@@ -254,7 +254,7 @@ def apply_building_boost(
 # ============================================================================
 
 
-def search_by_building(building_name: str, top_k: int = 10) -> List[Dict[str, Any]]:
+def search_by_building(building_name: str, top_k: int = 10) -> list[dict[str, Any]]:
     """
     Search specifically for all documents related to a building.
     IMPROVED: Uses fuzzy matching filter.
@@ -264,7 +264,7 @@ def search_by_building(building_name: str, top_k: int = 10) -> List[Dict[str, An
         top_k: Number of results to return
 
     Returns:
-        List of search results for the building
+        list of search results for the building
     """
     all_results = []
 
@@ -287,15 +287,15 @@ def search_by_building(building_name: str, top_k: int = 10) -> List[Dict[str, An
     return filtered_results[:top_k]
 
 
-def get_search_statistics(hits: List[Dict[str, Any]]) -> Dict[str, Any]:
+def get_search_statistics(hits: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Generate statistics about search results for debugging/monitoring.
 
     Args:
-        hits: List of search results
+        hits: list of search results
 
     Returns:
-        Dictionary with statistics
+        dictionary with statistics
     """
     doc_type_counts = {}
     building_counts = {}

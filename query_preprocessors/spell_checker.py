@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import logging
-from typing import Optional, Type
+from typing import Optional
+from textblob import TextBlob
 
 from query_preprocessors.base_preprocessor import BasePreprocessor
 
@@ -19,7 +20,7 @@ class SpellCheckPreprocessor(BasePreprocessor):
     """
 
     # Module-level cache of the import to satisfy type checkers
-    _TextBlob: Optional[Type] = None
+    _TextBlob: Optional[type] = None
 
     def __init__(self) -> None:
         super().__init__()
@@ -36,12 +37,11 @@ class SpellCheckPreprocessor(BasePreprocessor):
     # -------- internal helpers -------- #
 
     @classmethod
-    def _lazy_import_textblob(cls) -> Optional[Type]:
+    def _lazy_import_textblob(cls) -> Optional[type]:
         """Import TextBlob once; return None if not installed."""
         if cls._TextBlob is not None:
             return cls._TextBlob
         try:
-            from textblob import TextBlob  # type: ignore
             cls._TextBlob = TextBlob
         except Exception:
             cls._TextBlob = None
@@ -84,14 +84,14 @@ class SpellCheckPreprocessor(BasePreprocessor):
         if not self.should_run(context):
             return
 
-        TextBlob = self._lazy_import_textblob()
-        if TextBlob is None:
+        textblob_cls = self._lazy_import_textblob()
+        if textblob_cls is None:
             # Extra guard for type checkers / runtime
             return
 
         try:
             # Compute a candidate correction
-            corrected = str(TextBlob(context.query).correct())
+            corrected = str(textblob_cls(context.query).correct())
 
             if corrected != context.query:
                 self.corrections_made += 1

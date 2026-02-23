@@ -6,17 +6,17 @@ Improved MaintenanceHandler.
 Handles maintenance-related requests, jobs, categories, and metrics.
 Delegates logic to generate_maintenance_answers.generate_maintenance_answer.
 """
+# First party import
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
-
 from structured_queries import (
     is_maintenance_query,
     is_ranking_query,
     is_property_condition_query,
-    is_counting_query,
 )
-
+from generate_maintenance_answers import generate_maintenance_answer
+# Local import
 from .base_handler import BaseQueryHandler
 
 
@@ -64,8 +64,6 @@ class MaintenanceHandler(BaseQueryHandler):
         query_text = context.query.strip()
 
         try:
-            from generate_maintenance_answers import generate_maintenance_answer
-
             prev_building = None
             previous_context = getattr(context, "previous_context", None)
             if previous_context:
@@ -96,7 +94,8 @@ class MaintenanceHandler(BaseQueryHandler):
             )
 
         except Exception as e:
-            self.logger.error(f"Maintenance handler error: {e}", exc_info=True)
+            self.logger.error(
+                "Maintenance handler error: %s", e, exc_info=True)
 
             return QueryResult(
                 query=query_text,

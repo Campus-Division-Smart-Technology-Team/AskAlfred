@@ -27,9 +27,6 @@ class CachingPreprocessor(BasePreprocessor):
 
     cache_key = None
 
-    def __init__(self):
-        super().__init__()
-
     def should_run(self, context) -> bool:
         if self.cache_key and context.get_from_cache(self.cache_key):
             return False
@@ -38,3 +35,6 @@ class CachingPreprocessor(BasePreprocessor):
     def mark_done(self, context):
         if self.cache_key:
             context.add_to_cache(self.cache_key, True)
+
+    def process(self, context) -> None:
+        raise NotImplementedError

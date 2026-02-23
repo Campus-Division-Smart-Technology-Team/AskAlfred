@@ -12,7 +12,8 @@ import random
 from query_types import QueryType
 from query_context import QueryContext
 from query_result import QueryResult
-from emojis import EMOJI_BUILDING, EMOJI_GORILLA, EMOJI_FIRE, EMOJI_MAINTENANCE, EMOJI_SMILE, EMOJI_CHEEKY
+from emojis import (EMOJI_BUILDING, EMOJI_GORILLA, EMOJI_FIRE,
+                    EMOJI_MAINTENANCE, EMOJI_SMILE, EMOJI_CHEEKY)
 
 from .base_handler import BaseQueryHandler
 

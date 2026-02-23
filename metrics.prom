@@ -1,0 +1,145 @@
+# --- Run Info ---
+# HELP askalfred_ingest_run_info Ingestion run metadata.
+# TYPE askalfred_ingest_run_info gauge
+askalfred_ingest_run_info{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1",source_path="data"} 1
+
+# --- File Counters ---
+# HELP askalfred_ingest_files_processed Total files processed.
+# TYPE askalfred_ingest_files_processed counter
+askalfred_ingest_files_processed{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 13
+# HELP askalfred_ingest_files_skipped Total files skipped.
+# TYPE askalfred_ingest_files_skipped counter
+askalfred_ingest_files_skipped{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0
+# HELP askalfred_ingest_files_failed Total files failed.
+# TYPE askalfred_ingest_files_failed counter
+askalfred_ingest_files_failed{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0
+
+# --- Vector Counters ---
+# HELP askalfred_ingest_total_vectors Total vectors upserted/created.
+# TYPE askalfred_ingest_total_vectors counter
+askalfred_ingest_total_vectors{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1292
+# HELP askalfred_ingest_vectors_skipped Total vectors skipped.
+# TYPE askalfred_ingest_vectors_skipped counter
+askalfred_ingest_vectors_skipped{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0
+
+# --- Throughput ---
+# HELP askalfred_ingest_duration_seconds Ingestion duration in seconds.
+# TYPE askalfred_ingest_duration_seconds gauge
+askalfred_ingest_duration_seconds{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 791.390109539032
+# HELP askalfred_ingest_vectors_per_second Average vectors per second.
+# TYPE askalfred_ingest_vectors_per_second gauge
+askalfred_ingest_vectors_per_second{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1.6325703144717878
+
+# --- Additional Counters ---
+# HELP askalfred_ingest_embed_batches_total embed batches total.
+# TYPE askalfred_ingest_embed_batches_total counter
+askalfred_ingest_embed_batches_total{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1055
+# HELP askalfred_ingest_embed_texts_total embed texts total.
+# TYPE askalfred_ingest_embed_texts_total counter
+askalfred_ingest_embed_texts_total{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1292
+# HELP askalfred_ingest_upsert_batches_total upsert batches total.
+# TYPE askalfred_ingest_upsert_batches_total counter
+askalfred_ingest_upsert_batches_total{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 39
+# HELP askalfred_ingest_fra_lock_acquire_total fra lock acquire total.
+# TYPE askalfred_ingest_fra_lock_acquire_total counter
+askalfred_ingest_fra_lock_acquire_total{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 18
+# HELP askalfred_ingest_fra_lock_acquire_attempts_total fra lock acquire attempts total.
+# TYPE askalfred_ingest_fra_lock_acquire_attempts_total counter
+askalfred_ingest_fra_lock_acquire_attempts_total{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 18
+
+# --- Timing Summaries ---
+# HELP askalfred_ingest_embed_batch_seconds_count embed_batch_seconds count.
+# TYPE askalfred_ingest_embed_batch_seconds_count counter
+askalfred_ingest_embed_batch_seconds_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1055
+# HELP askalfred_ingest_embed_batch_seconds_sum embed_batch_seconds sum seconds.
+# TYPE askalfred_ingest_embed_batch_seconds_sum counter
+askalfred_ingest_embed_batch_seconds_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 248.91642899983708
+# HELP askalfred_ingest_embed_batch_seconds_max embed_batch_seconds max seconds.
+# TYPE askalfred_ingest_embed_batch_seconds_max gauge
+askalfred_ingest_embed_batch_seconds_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 5.01595670000097
+# HELP askalfred_ingest_upsert_batch_seconds_count upsert_batch_seconds count.
+# TYPE askalfred_ingest_upsert_batch_seconds_count counter
+askalfred_ingest_upsert_batch_seconds_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 39
+# HELP askalfred_ingest_upsert_batch_seconds_sum upsert_batch_seconds sum seconds.
+# TYPE askalfred_ingest_upsert_batch_seconds_sum counter
+askalfred_ingest_upsert_batch_seconds_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 778.8718867000352
+# HELP askalfred_ingest_upsert_batch_seconds_max upsert_batch_seconds max seconds.
+# TYPE askalfred_ingest_upsert_batch_seconds_max gauge
+askalfred_ingest_upsert_batch_seconds_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 31.881153900001664
+# HELP askalfred_ingest_fra_lock_acquire_wait_seconds_count fra_lock_acquire_wait_seconds count.
+# TYPE askalfred_ingest_fra_lock_acquire_wait_seconds_count counter
+askalfred_ingest_fra_lock_acquire_wait_seconds_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 18
+# HELP askalfred_ingest_fra_lock_acquire_wait_seconds_sum fra_lock_acquire_wait_seconds sum seconds.
+# TYPE askalfred_ingest_fra_lock_acquire_wait_seconds_sum counter
+askalfred_ingest_fra_lock_acquire_wait_seconds_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1.5639999999984866
+# HELP askalfred_ingest_fra_lock_acquire_wait_seconds_max fra_lock_acquire_wait_seconds max seconds.
+# TYPE askalfred_ingest_fra_lock_acquire_wait_seconds_max gauge
+askalfred_ingest_fra_lock_acquire_wait_seconds_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0.11000000000058208
+# HELP askalfred_ingest_fra_supersession_global_lock_wait_seconds_count fra_supersession_global_lock_wait_seconds count.
+# TYPE askalfred_ingest_fra_supersession_global_lock_wait_seconds_count counter
+askalfred_ingest_fra_supersession_global_lock_wait_seconds_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 5
+# HELP askalfred_ingest_fra_supersession_global_lock_wait_seconds_sum fra_supersession_global_lock_wait_seconds sum seconds.
+# TYPE askalfred_ingest_fra_supersession_global_lock_wait_seconds_sum counter
+askalfred_ingest_fra_supersession_global_lock_wait_seconds_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0.4539999999979045
+# HELP askalfred_ingest_fra_supersession_global_lock_wait_seconds_max fra_supersession_global_lock_wait_seconds max seconds.
+# TYPE askalfred_ingest_fra_supersession_global_lock_wait_seconds_max gauge
+askalfred_ingest_fra_supersession_global_lock_wait_seconds_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0.11000000000058208
+# HELP askalfred_ingest_metadata_bytes_count metadata_bytes count.
+# TYPE askalfred_ingest_metadata_bytes_count counter
+askalfred_ingest_metadata_bytes_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 109
+# HELP askalfred_ingest_metadata_bytes_sum metadata_bytes sum seconds.
+# TYPE askalfred_ingest_metadata_bytes_sum counter
+askalfred_ingest_metadata_bytes_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 220710.0
+# HELP askalfred_ingest_metadata_bytes_max metadata_bytes max seconds.
+# TYPE askalfred_ingest_metadata_bytes_max gauge
+askalfred_ingest_metadata_bytes_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 5492.0
+# HELP askalfred_ingest_metadata_bytes_ex_text_count metadata_bytes_ex_text count.
+# TYPE askalfred_ingest_metadata_bytes_ex_text_count counter
+askalfred_ingest_metadata_bytes_ex_text_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 109
+# HELP askalfred_ingest_metadata_bytes_ex_text_sum metadata_bytes_ex_text sum seconds.
+# TYPE askalfred_ingest_metadata_bytes_ex_text_sum counter
+askalfred_ingest_metadata_bytes_ex_text_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 131629.0
+# HELP askalfred_ingest_metadata_bytes_ex_text_max metadata_bytes_ex_text max seconds.
+# TYPE askalfred_ingest_metadata_bytes_ex_text_max gauge
+askalfred_ingest_metadata_bytes_ex_text_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 4087.0
+# HELP askalfred_ingest_metadata_bytes_post_validation_count metadata_bytes_post_validation count.
+# TYPE askalfred_ingest_metadata_bytes_post_validation_count counter
+askalfred_ingest_metadata_bytes_post_validation_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 109
+# HELP askalfred_ingest_metadata_bytes_post_validation_sum metadata_bytes_post_validation sum seconds.
+# TYPE askalfred_ingest_metadata_bytes_post_validation_sum counter
+askalfred_ingest_metadata_bytes_post_validation_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 209580.0
+# HELP askalfred_ingest_metadata_bytes_post_validation_max metadata_bytes_post_validation max seconds.
+# TYPE askalfred_ingest_metadata_bytes_post_validation_max gauge
+askalfred_ingest_metadata_bytes_post_validation_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 4848.0
+# HELP askalfred_ingest_upsert_batch_bytes_count upsert_batch_bytes count.
+# TYPE askalfred_ingest_upsert_batch_bytes_count counter
+askalfred_ingest_upsert_batch_bytes_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 39
+# HELP askalfred_ingest_upsert_batch_bytes_sum upsert_batch_bytes sum seconds.
+# TYPE askalfred_ingest_upsert_batch_bytes_sum counter
+askalfred_ingest_upsert_batch_bytes_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 47560319.0
+# HELP askalfred_ingest_upsert_batch_bytes_max upsert_batch_bytes max seconds.
+# TYPE askalfred_ingest_upsert_batch_bytes_max gauge
+askalfred_ingest_upsert_batch_bytes_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 1354578.0
+# HELP askalfred_ingest_upsert_batch_metadata_bytes_per_vector_count upsert_batch_metadata_bytes_per_vector count.
+# TYPE askalfred_ingest_upsert_batch_metadata_bytes_per_vector_count counter
+askalfred_ingest_upsert_batch_metadata_bytes_per_vector_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 39
+# HELP askalfred_ingest_upsert_batch_metadata_bytes_per_vector_sum upsert_batch_metadata_bytes_per_vector sum seconds.
+# TYPE askalfred_ingest_upsert_batch_metadata_bytes_per_vector_sum counter
+askalfred_ingest_upsert_batch_metadata_bytes_per_vector_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 87695.0
+# HELP askalfred_ingest_upsert_batch_metadata_bytes_per_vector_max upsert_batch_metadata_bytes_per_vector max seconds.
+# TYPE askalfred_ingest_upsert_batch_metadata_bytes_per_vector_max gauge
+askalfred_ingest_upsert_batch_metadata_bytes_per_vector_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 4737.0
+# HELP askalfred_ingest_upsert_queue_put_wait_seconds_count upsert_queue_put_wait_seconds count.
+# TYPE askalfred_ingest_upsert_queue_put_wait_seconds_count counter
+askalfred_ingest_upsert_queue_put_wait_seconds_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 39
+# HELP askalfred_ingest_upsert_queue_put_wait_seconds_sum upsert_queue_put_wait_seconds sum seconds.
+# TYPE askalfred_ingest_upsert_queue_put_wait_seconds_sum counter
+askalfred_ingest_upsert_queue_put_wait_seconds_sum{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0.0002044999855570495
+# HELP askalfred_ingest_upsert_queue_put_wait_seconds_max upsert_queue_put_wait_seconds max seconds.
+# TYPE askalfred_ingest_upsert_queue_put_wait_seconds_max gauge
+askalfred_ingest_upsert_queue_put_wait_seconds_max{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 2.099999983329326e-05
+
+# --- Run Health ---
+# HELP askalfred_ingest_failed_files_count Number of failed files in this run.
+# TYPE askalfred_ingest_failed_files_count gauge
+askalfred_ingest_failed_files_count{run_id="901b3d4b02544d88b81b0921264c1e86",source_id="data",dry_run="false",index_name="default",upsert_workers="1"} 0

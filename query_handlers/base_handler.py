@@ -5,7 +5,7 @@ Base handler interface for query processing.
 """
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any
 from query_context import QueryContext
 from query_result import QueryResult
 
@@ -43,7 +43,6 @@ class BaseQueryHandler(ABC):
         Returns:
             True if handler can process this query
         """
-        pass
 
     @abstractmethod
     def handle(self, context: QueryContext) -> QueryResult:
@@ -56,7 +55,6 @@ class BaseQueryHandler(ABC):
         Returns:
             QueryResult with answer and metadata
         """
-        pass
 
     def get_confidence(self, context: QueryContext) -> float:
         """
@@ -69,7 +67,7 @@ class BaseQueryHandler(ABC):
         """
         return 1.0 if self.can_handle(context) else 0.0
 
-    def get_metadata(self, context: QueryContext) -> Dict[str, Any]:
+    def get_metadata(self, context: QueryContext) -> dict[str, Any]:
         """
         Extract handler-specific metadata from context.
 
@@ -101,7 +99,7 @@ class PatternBasedHandler(BaseQueryHandler):
 
         return False
 
-    def get_metadata(self, context) -> Dict[str, Any]:
+    def get_metadata(self, context) -> dict[str, Any]:
         """Return matched pattern info."""
         matched = context.get_from_cache('matched_pattern')
         if matched:

@@ -1,22 +1,19 @@
 # search_core/semantic_search.py
 
-from typing import List, Dict, Tuple, Optional
+from typing import Optional
 import logging
 
-from answer_generation import (
+from generate_semantic_answer import (
     enhanced_answer_with_source_date,
     generate_building_focused_answer
 )
 from business_terms import BusinessTermMapper
-from building_utils import (
+from building.utils import (
     extract_building_from_query,
     resolve_building_name_fuzzy,
     group_results_by_building
 )
 from config import TARGET_INDEXES, MIN_SCORE_THRESHOLD
-
-from date_utils import search_source_for_latest_date
-
 from search_core.search_utils import (
     search_one_index,
     deduplicate_results,
@@ -29,7 +26,7 @@ def semantic_search(
     query: str,
     top_k: int,
     building_filter: Optional[str] = None
-) -> Tuple[List[Dict], str, str, bool]:
+) -> tuple[list[dict], str, str, bool]:
 
     logging.info(
         "[semantic_search] running: q=%s, k=%s, building=%s", query, top_k, building_filter)

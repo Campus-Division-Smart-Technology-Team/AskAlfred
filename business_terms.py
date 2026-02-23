@@ -6,7 +6,7 @@ Optimised version with pre-compiled patterns and better type safety.
 """
 
 import os
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Optional, Any
 import re
 from dataclasses import dataclass, field
 
@@ -21,11 +21,11 @@ class TermInfo:
     term_key: str
     full_name: str
     document_type: str
-    search_terms: List[str]
+    search_terms: list[str]
     description: str
-    variations: List[str] = field(default_factory=list)
+    variations: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for backward compatibility."""
         return {
             'term': self.term_key,
@@ -116,7 +116,7 @@ TERM_DEFINITIONS = {
 # PRE-COMPILED PATTERNS
 # ============================================================================
 
-def _compile_patterns_for_term(term_info: TermInfo) -> List[re.Pattern]:
+def _compile_patterns_for_term(term_info: TermInfo) -> list[re.Pattern]:
     """
     Create pre-compiled regex patterns for a term and its variations.
 
@@ -124,7 +124,7 @@ def _compile_patterns_for_term(term_info: TermInfo) -> List[re.Pattern]:
         term_info: Term information object
 
     Returns:
-        List of compiled patterns
+        list of compiled patterns
     """
     patterns = []
 
@@ -143,7 +143,7 @@ def _compile_patterns_for_term(term_info: TermInfo) -> List[re.Pattern]:
 
 
 # Build pattern cache at module load time
-_PATTERN_CACHE: Dict[str, List[re.Pattern]] = {
+_PATTERN_CACHE: dict[str, list[re.Pattern]] = {
     term_key: _compile_patterns_for_term(term_info)
     for term_key, term_info in TERM_DEFINITIONS.items()
 }
@@ -164,7 +164,7 @@ class BusinessTermMapper:
     }
 
     @classmethod
-    def detect_business_terms(cls, query: str) -> List[Dict[str, Any]]:
+    def detect_business_terms(cls, query: str) -> list[dict[str, Any]]:
         """
         Detect ALL business terms in a query.
 
@@ -172,7 +172,7 @@ class BusinessTermMapper:
             query: User query string
 
         Returns:
-            List of detected term dictionaries
+            list of detected term dictionaries
         """
         if not query:
             return []
@@ -196,7 +196,7 @@ class BusinessTermMapper:
         return detected_terms
 
     @classmethod
-    def enhance_query_with_terms(cls, query: str) -> Tuple[str, Dict[str, Any]]:
+    def enhance_query_with_terms(cls, query: str) -> tuple[str, dict[str, Any]]:
         """
         Enhance query with business term expansions.
 
@@ -206,7 +206,7 @@ class BusinessTermMapper:
         Returns:
             (enhanced_query, term_context)
             - enhanced_query: Query with expanded terms
-            - term_context: Dictionary mapping term keys to term info
+            - term_context: dictionary mapping term keys to term info
         """
         if not query:
             return query, {}
@@ -232,7 +232,7 @@ class BusinessTermMapper:
         return enhanced_query, term_context
 
     @classmethod
-    def get_term_info(cls, term_key: str) -> Optional[Dict[str, Any]]:
+    def get_term_info(cls, term_key: str) -> Optional[dict[str, Any]]:
         """
         Get information about a specific term.
 
@@ -246,17 +246,17 @@ class BusinessTermMapper:
         return term_info.to_dict() if term_info else None
 
     @classmethod
-    def get_all_terms(cls) -> List[str]:
+    def get_all_terms(cls) -> list[str]:
         """
         Get list of all recognised term keys.
 
         Returns:
-            List of term keys
+            list of term keys
         """
         return list(TERM_DEFINITIONS.keys())
 
     @classmethod
-    def get_terms_by_document_type(cls, doc_type: str) -> List[Dict[str, Any]]:
+    def get_terms_by_document_type(cls, doc_type: str) -> list[dict[str, Any]]:
         """
         Get all terms associated with a specific document type.
 
@@ -264,7 +264,7 @@ class BusinessTermMapper:
             doc_type: Document type to filter by
 
         Returns:
-            List of term dictionaries
+            list of term dictionaries
         """
         return [
             term_info.to_dict()
@@ -296,9 +296,9 @@ def add_custom_term(
     term_key: str,
     full_name: str,
     document_type: str,
-    search_terms: List[str],
+    search_terms: list[str],
     description: str,
-    variations: Optional[List[str]] = None
+    variations: Optional[list[str]] = None
 ) -> bool:
     """
     Add a custom business term at runtime.
@@ -307,7 +307,7 @@ def add_custom_term(
         term_key: Unique key for the term
         full_name: Full name/expansion
         document_type: Associated document type
-        search_terms: List of search terms
+        search_terms: list of search terms
         description: Human-readable description
         variations: Optional list of variations
 
@@ -341,12 +341,12 @@ def add_custom_term(
     return True
 
 
-def get_term_statistics() -> Dict[str, Any]:
+def get_term_statistics() -> dict[str, Any]:
     """
     Get statistics about registered terms.
 
     Returns:
-        Dictionary with statistics
+        dictionary with statistics
     """
     doc_type_counts = {}
     total_variations = 0
@@ -371,12 +371,12 @@ def get_term_statistics() -> Dict[str, Any]:
     }
 
 
-def validate_term_definitions() -> List[str]:
+def validate_term_definitions() -> list[str]:
     """
     Validate all term definitions for consistency.
 
     Returns:
-        List of validation warnings (empty if all valid)
+        list of validation warnings (empty if all valid)
     """
     warnings = []
 

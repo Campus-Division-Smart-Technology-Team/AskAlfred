@@ -12,37 +12,45 @@ Upgrades:
 - Modular, well-logged design
 """
 
-from typing import Dict, Any, Optional, TYPE_CHECKING, List
+from typing import Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 import logging
 import json
 import time
 import zipfile
 from pathlib import Path
-import re
 import numpy as np
 from query_types import QueryType
 from query_context import QueryContext
 from emojis import (EMOJI_CAUTION, EMOJI_TIME, EMOJI_TICK, EMOJI_CROSS,)
+from alfred_exceptions import ModelNotInitialisedError
 from structured_queries import (
     is_property_condition_query,
+    COUNTING_PATTERNS,
+    MAINTENANCE_PATTERNS,
+    RANKING_PATTERNS,
 )
-LOCAL_MODEL_DIR = Path("models/all-MiniLM-L6-v2")
-try:
-    from structured_queries import (
-        COUNTING_PATTERNS,
-        MAINTENANCE_PATTERNS,
-        RANKING_PATTERNS,
-    )
-    PATTERNS_AVAILABLE = True
-except ImportError:
-    PATTERNS_AVAILABLE = False
-    COUNTING_PATTERNS = [re.compile(
-        r"\b(how many|count|number of|total)\b", re.I)]
-    MAINTENANCE_PATTERNS = [re.compile(
-        r"\b(maintenance|ppm|job|request)\b", re.I)]
-    RANKING_PATTERNS = [re.compile(r"\b(rank|largest|top)\b", re.I)]
-
+from config import (
+    INTENT_MEAN_SIMILARITY_WEIGHT,
+    INTENT_MAX_EXAMPLE_SIMILARITY_WEIGHT,
+    INTENT_SOFTMAX_TEMPERATURE,
+    INTENT_FOLLOWUP_BOOST_FACTOR,
+    INTENT_BUILDING_MAINTENANCE_BIAS,
+    INTENT_BUILDING_COUNTING_BIAS,
+    INTENT_BUILDING_CONDITION_BIAS,
+    INTENT_BUILDING_SEMANTIC_BIAS,
+    INTENT_BUSINESS_COUNTING_BIAS,
+    INTENT_BUSINESS_SEMANTIC_BIAS,
+    INTENT_BUSINESS_CONDITION_BIAS,
+    INTENT_HIGHER_UPPER_CONFIDENCE,
+    INTENT_LOWER_UPPER_CONFIDENCE,
+    INTENT_HIGHER_MIDDLE_CONFIDENCE,
+    INTENT_LOWER_MIDDLE_CONFIDENCE,
+    INTENT_LOWEST_CONFIDENCE,
+    INTENT_CONFIDENCE_THRESHOLD,
+    INTENT_QUERY_CACHE_MAX_SIZE,
+    LOCAL_MODEL_DIR
+)
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -142,9 +150,9 @@ INTENT_EXAMPLES = {
 class IntentClassificationResult:
     intent: QueryType
     confidence: float
-    confidence_scores: Dict[QueryType, float] = field(default_factory=dict)
+    confidence_scores: dict[QueryType, float] = field(default_factory=dict)
     method: str = "semantic"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -153,33 +161,33 @@ class IntentClassificationResult:
 
 class NLPIntentClassifier:
     # Semantic similarity weights
-    MEAN_SIMILARITY_WEIGHT = 0.7
-    MAX_EXAMPLE_SIMILARITY_WEIGHT = 0.3
+    MEAN_SIMILARITY_WEIGHT = INTENT_MEAN_SIMILARITY_WEIGHT
+    MAX_EXAMPLE_SIMILARITY_WEIGHT = INTENT_MAX_EXAMPLE_SIMILARITY_WEIGHT
 
     # Softmax temperature for calibration
-    SOFTMAX_TEMPERATURE = 0.2
+    SOFTMAX_TEMPERATURE = INTENT_SOFTMAX_TEMPERATURE
 
     # Context bias weights
-    FOLLOWUP_BOOST_FACTOR = 0.03
-    BUILDING_MAINTENANCE_BIAS = 0.05
-    BUILDING_COUNTING_BIAS = 0.05
-    BUILDING_CONDITION_BIAS = 0.05
-    BUILDING_SEMANTIC_BIAS = 0.02
-    BUSINESS_COUNTING_BIAS = 0.02
-    BUSINESS_SEMANTIC_BIAS = 0.02
-    BUSINESS_CONDITION_BIAS = 0.02
+    FOLLOWUP_BOOST_FACTOR = INTENT_FOLLOWUP_BOOST_FACTOR
+    BUILDING_MAINTENANCE_BIAS = INTENT_BUILDING_MAINTENANCE_BIAS
+    BUILDING_COUNTING_BIAS = INTENT_BUILDING_COUNTING_BIAS
+    BUILDING_CONDITION_BIAS = INTENT_BUILDING_CONDITION_BIAS
+    BUILDING_SEMANTIC_BIAS = INTENT_BUILDING_SEMANTIC_BIAS
+    BUSINESS_COUNTING_BIAS = INTENT_BUSINESS_COUNTING_BIAS
+    BUSINESS_SEMANTIC_BIAS = INTENT_BUSINESS_SEMANTIC_BIAS
+    BUSINESS_CONDITION_BIAS = INTENT_BUSINESS_CONDITION_BIAS
 
     # Confidence scores
-    HIGHER_UPPER_CONFIDENCE = 0.85
-    LOWER_UPPER_CONFIDENCE = 0.80
-    HIGHER_MIDDLE_CONFIDENCE = 0.75
-    LOWER_MIDDLE_CONFIDENCE = 0.70
-    LOWEST_CONFIDENCE = 0.60
+    HIGHER_UPPER_CONFIDENCE = INTENT_HIGHER_UPPER_CONFIDENCE
+    LOWER_UPPER_CONFIDENCE = INTENT_LOWER_UPPER_CONFIDENCE
+    HIGHER_MIDDLE_CONFIDENCE = INTENT_HIGHER_MIDDLE_CONFIDENCE
+    LOWER_MIDDLE_CONFIDENCE = INTENT_LOWER_MIDDLE_CONFIDENCE
+    LOWEST_CONFIDENCE = INTENT_LOWEST_CONFIDENCE
 
     def __init__(
         self,
         model_name: str = "all-MiniLM-L6-v2",
-        confidence_threshold: float = 0.65,
+        confidence_threshold: float = INTENT_CONFIDENCE_THRESHOLD,
         cache_path: str = "intent_embeddings_cache.pkl",
     ):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -187,10 +195,10 @@ class NLPIntentClassifier:
         self.confidence_threshold = confidence_threshold
         self.cache_path = cache_path
         self.model = None
-        self.intent_embeddings: Dict[QueryType, Dict[str, Any]] = {}
+        self.intent_embeddings: dict[QueryType, dict[str, Any]] = {}
         self.enabled = False
         self._query_cache = {}
-        self._query_cache_max_size = 32
+        self._query_cache_max_size = INTENT_QUERY_CACHE_MAX_SIZE
 
         if SENTENCE_TRANSFORMERS_AVAILABLE:
             try:
@@ -317,7 +325,7 @@ class NLPIntentClassifier:
                 "Model extracted to %s in %.2f s", LOCAL_MODEL_DIR.parent, time.time() - t_zip
             )
         if zip_path.exists() and not (LOCAL_MODEL_DIR / "config.json").exists():
-            raise RuntimeError(
+            raise ModelNotInitialisedError(
                 f"{EMOJI_CROSS} Model extraction failed: {LOCAL_MODEL_DIR} does not look like a HF model directory"
             )
         # -----------------------------------------------------
@@ -388,7 +396,7 @@ class NLPIntentClassifier:
         # Ensure the SentenceTransformer model is initialised before encoding.
         if self.model is None:
             if not SENTENCE_TRANSFORMERS_AVAILABLE or _SentenceTransformerRuntime is None:
-                raise RuntimeError(
+                raise ModelNotInitialisedError(
                     "SentenceTransformer is not available; cannot generate embeddings. "
                     "Install sentence-transformers or run in pattern-only mode."
                 )
@@ -413,7 +421,8 @@ class NLPIntentClassifier:
             return self._query_cache[query]
 
         if self.model is None:
-            raise RuntimeError("SentenceTransformer model not initialised")
+            raise ModelNotInitialisedError(
+                "SentenceTransformer model not initialised")
 
         emb = self.model.encode([query], convert_to_numpy=True)[0]
 
@@ -495,7 +504,8 @@ class NLPIntentClassifier:
     def _semantic_intent(self, query: str, emb: Optional[np.ndarray] = None) -> IntentClassificationResult:
         """Returns calibrated probabilities using softmax"""
         if self.model is None:
-            raise RuntimeError("SentenceTransformer model not initialised")
+            raise ModelNotInitialisedError(
+                "SentenceTransformer model not initialised")
 
         if emb is None:
             emb = self._get_query_embedding_cached(query)
@@ -507,7 +517,10 @@ class NLPIntentClassifier:
                 data["embeddings"], axis=1) * np.linalg.norm(emb)
             norms = np.where(norms == 0, 1e-10, norms)
             ex_sims = np.dot(data["embeddings"], emb) / norms
-            sims[intent] = 0.7 * mean_sim + 0.3 * np.max(ex_sims)
+            sims[intent] = (
+                self.MEAN_SIMILARITY_WEIGHT * mean_sim
+                + self.MAX_EXAMPLE_SIMILARITY_WEIGHT * np.max(ex_sims)
+            )
 
         # softmax calibration
         logits = np.array(list(sims.values()))
@@ -526,7 +539,7 @@ class NLPIntentClassifier:
             metadata={"model": self.model_name},
         )
 
-    def classify_intents_batch(self, queries: List[str], contexts: Optional[List["QueryContext"]] = None):
+    def classify_intents_batch(self, queries: list[str], contexts: Optional[list["QueryContext"]] = None):
         """Classify multiple queries efficiently using batch encoding"""
         if not queries:
             return []
@@ -652,7 +665,7 @@ class NLPIntentClassifier:
         scores = result.confidence_scores.copy()
 
         # Ensure all QueryTypes appear in bias map (even if some are missing from scores)
-        bias: Dict["QueryType", float] = {k: 0.0 for k in scores}
+        bias: dict["QueryType", float] = {k: 0.0 for k in scores}
 
         q_lower = (getattr(context, "query", "") or "").lower().strip()
         tokens = q_lower.split()  # Split once, reuse
@@ -781,7 +794,7 @@ class NLPIntentClassifier:
         self,
         chosen: QueryType,
         chosen_prob: float,
-    ) -> Dict[QueryType, float]:
+    ) -> dict[QueryType, float]:
         """
         Intent probability distribution for pattern fallback,
         so _apply_context_bias() can reweight it.

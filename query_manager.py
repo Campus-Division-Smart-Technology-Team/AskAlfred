@@ -6,7 +6,7 @@ Query Manager - Centralised query orchestration for AskAlfred.
 """
 
 
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Any
 import logging
 import time
 
@@ -32,8 +32,14 @@ from query_preprocessors import (
 from intent_classifier import NLPIntentClassifier
 from query_types import QueryType
 from session_manager import SessionManager
-from building_validation import INVALID_BUILDING_NAMES
+from building.validation import INVALID_BUILDING_NAMES
 from emojis import EMOJI_CROSS, EMOJI_TICK, EMOJI_CAUTION, EMOJI_TIME
+from config import (
+    QUERY_RULE_OVERRIDE_THRESHOLD,
+    QUERY_CONF_THRESHOLD,
+    QUERY_FOLLOWUP_ML_CONF_THRESHOLD,
+    QUERY_FOLLOWUP_MAX_TOKENS,
+)
 
 # ============================================================================
 # FOLLOWUP CONFIGs
@@ -74,11 +80,11 @@ class QueryManager:
     # Default Routing Thresholds for Configuration
     DEFAULT_CONFIG = {
         # Thresholds for hybrid routing. Keys map to internal variables.
-        "RULE_OVERRIDE_THRESHOLD": 0.75,
-        "CONF_THRESHOLD": 0.60,
+        "RULE_OVERRIDE_THRESHOLD": QUERY_RULE_OVERRIDE_THRESHOLD,
+        "CONF_THRESHOLD": QUERY_CONF_THRESHOLD,
     }
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[dict] = None):
         """
         Args:
             config (dict | None):
@@ -111,7 +117,7 @@ class QueryManager:
 
         # Cache
         self.cache_enabled = True
-        self.cache: Dict[str, QueryResult] = {}
+        self.cache: dict[str, QueryResult] = {}
 
         # Stats
         self.stats = {
@@ -134,7 +140,7 @@ class QueryManager:
     # Handler initialisation
     # =========================================================================
 
-    def _initialise_default_handlers(self) -> List:
+    def _initialise_default_handlers(self) -> list:
         """Create the default handler chain."""
         return [
             ConversationalHandler(),
@@ -145,7 +151,7 @@ class QueryManager:
             SemanticSearchHandler(),
         ]
 
-    def _load_handlers_from_config(self, config: Dict) -> List:
+    def _load_handlers_from_config(self, config: dict) -> list:
         """
         Load handlers from config. Config format:
 
@@ -158,18 +164,19 @@ class QueryManager:
         """
         handlers = []
 
-        for handler_name, settings in config.items():
+        for handler_cls_name, settings in config.items():
             if not settings.get("enabled", True):
                 continue
 
             try:
-                handler_cls = globals().get(handler_name)
+                handler_cls = globals().get(handler_cls_name)
                 if handler_cls:
                     handlers.append(handler_cls())
                 else:
-                    self.logger.warning(f"Unknown handler: {handler_name}")
+                    self.logger.warning(
+                        "Unknown handler: %s", handler_cls_name)
             except Exception as e:
-                self.logger.error(f"Could not load {handler_name}: {e}")
+                self.logger.error("Could not load %s: %s", handler_cls_name, e)
 
         return handlers
 
@@ -203,7 +210,7 @@ class QueryManager:
             return True
 
         # 5️⃣ Ultra-short continuation ("more", "next", "continue")
-        if len(tokens) <= 2 and prev_context:
+        if len(tokens) <= QUERY_FOLLOWUP_MAX_TOKENS and prev_context:
             return True
         # 6️⃣ ML uncertainty + previous intent → assume follow-up
         if (
@@ -211,7 +218,7 @@ class QueryManager:
             and prev_context
             and not prev_context.get("building")
             and ml_intent_confidence is not None
-            and ml_intent_confidence < 0.55
+            and ml_intent_confidence < QUERY_FOLLOWUP_ML_CONF_THRESHOLD
         ):
             return True
         return False
@@ -255,7 +262,7 @@ class QueryManager:
     # Preprocessor initialisation
     # =========================================================================
 
-    def _initialise_preprocessors(self) -> List:
+    def _initialise_preprocessors(self) -> list:
         """
         Preprocessors run before handlers and enrich QueryContext.
         Order matters.
@@ -346,26 +353,26 @@ class QueryManager:
         if self.cache_enabled and cache_key in self.cache:
             self.stats["cached_queries"] += 1
 
-            result = self.cache[cache_key]
+            query_result = self.cache[cache_key]
 
             # persist context snapshot
             SessionManager.set_last_query_context(context)
 
             # use cached result’s query_type + no confidence (confidence was for ML path)
-            SessionManager.set_last_intent(result.query_type, None)
+            SessionManager.set_last_intent(query_result.query_type, None)
 
             elapsed_ms = (time.time() - start_time) * 1000
 
             # Record telemetry for cached responses (coerce None -> "unknown")
             self._update_stats(
-                handler_name=result.handler_used or "unknown",
-                query_type=result.query_type or "unknown",
+                handler_class_name=query_result.handler_used or "unknown",
+                query_type=query_result.query_type or "unknown",
                 elapsed_ms=elapsed_ms,
-                success=result.success
+                success=query_result.success
             )
 
-            result.processing_time_ms = elapsed_ms
-            return result
+            query_result.processing_time_ms = elapsed_ms
+            return query_result
 
         self.logger.warning("FINAL QUERY BEFORE ROUTING: %r", context.query)
 
@@ -378,29 +385,29 @@ class QueryManager:
         # Execute handler
         # ---------------------------------------------------
         handler_start = time.time()
-        result = route.handler.handle(context)
+        query_result = route.handler.handle(context)
         handler_elapsed_ms = (time.time() - handler_start) * 1000
 
         # Attach handler metadata
-        result.handler_used = route.handler.__class__.__name__
-        result.query_type = route.handler.query_type.value
+        query_result.handler_used = route.handler.__class__.__name__
+        query_result.query_type = route.handler.query_type.value
 
         if isinstance(route.metadata, dict):
-            result.metadata.update(route.metadata)
+            query_result.metadata.update(route.metadata)
 
         # ---------------------------------------------------
         # Stats update (expanded telemetry)
         # ---------------------------------------------------
         self._update_stats(
-            handler_name=result.handler_used or "unknown",
-            query_type=result.query_type or "unknown",
+            handler_class_name=query_result.handler_used or "unknown",
+            query_type=query_result.query_type or "unknown",
             elapsed_ms=handler_elapsed_ms,
-            success=result.success
+            success=query_result.success
         )
 
         # Cache result
         if self.cache_enabled:
-            self.cache[cache_key] = result
+            self.cache[cache_key] = query_result
 
         # ---------------------------------------------------
         # 5. CONVERSATIONAL MEMORY PERSISTENCE
@@ -425,11 +432,11 @@ class QueryManager:
 
         # Total round-trip time for everything
         total_elapsed_ms = (time.time() - start_time) * 1000
-        result.processing_time_ms = total_elapsed_ms
+        query_result.processing_time_ms = total_elapsed_ms
         logging.info("%s QueryManager.process_query took %.2f ms", EMOJI_TIME,
-                     result.processing_time_ms)
+                     query_result.processing_time_ms)
 
-        return result
+        return query_result
 
     # =========================================================================
     # Preprocessor execution
@@ -457,16 +464,16 @@ class QueryManager:
         best_handler = None
         best_priority = float('inf')
 
-        for handler in self.handlers:
+        for h in self.handlers:
             try:
-                if handler.can_handle(context):
-                    if handler.priority < best_priority:
-                        best_priority = handler.priority
-                        best_handler = handler
+                if h.can_handle(context):
+                    if h.priority < best_priority:
+                        best_priority = h.priority
+                        best_handler = h
             except Exception as e:
                 self.logger.error(
                     "Handler %s failed during can_handle(): %s",
-                    handler.__class__.__name__,
+                    h.__class__.__name__,
                     e,
                     exc_info=True
                 )
@@ -495,15 +502,15 @@ class QueryManager:
         best_handler = None
         best_priority = float('inf')
 
-        for handler in self.handlers:
+        for h in self.handlers:
             try:
-                if handler.can_handle(context):
-                    if handler.priority < best_priority:
-                        best_priority = handler.priority
-                        best_handler = handler
+                if h.can_handle(context):
+                    if h.priority < best_priority:
+                        best_priority = h.priority
+                        best_handler = h
             except Exception as e:
                 self.logger.error(
-                    "Handler %s failed during can_handle(): %s", handler.__class__.__name__, e,
+                    "Handler %s failed during can_handle(): %s", h.__class__.__name__, e,
                     exc_info=True
                 )
 
@@ -650,13 +657,13 @@ class QueryManager:
 
         return f"{query_part}:{context.top_k}:{building_part}"
 
-    def _update_stats(self, handler_name: str, query_type: str, elapsed_ms: float, success: bool):
+    def _update_stats(self, handler_class_name: str, query_type: str, elapsed_ms: float, success: bool):
         # --- Update global totals ---
         self.stats["total_queries"] += 1
         self.stats["overall_total_ms"] += elapsed_ms
 
         # --- Per-handler stats ---
-        hstats = self.stats["handlers"].setdefault(handler_name, {
+        hstats = self.stats["handlers"].setdefault(handler_class_name, {
             "count": 0,
             "total_ms": 0.0,
             "min_ms": float("inf"),
@@ -720,22 +727,22 @@ class QueryManager:
         print(f"Overall avg time: {overall_avg:.2f} ms\n")
 
         print("Handlers:")
-        for handler, s in self.stats["handlers"].items():
-            print(f"  {handler}:")
-            print(f"    Count:          {s['count']}")
-            print(f"    Avg time:       {s['avg_ms']:.2f} ms")
+        for h_name, h_stats in self.stats["handlers"].items():
+            print(f"  {h_name}:")
+            print(f"    Count:          {h_stats['count']}")
+            print(f"    Avg time:       {h_stats['avg_ms']:.2f} ms")
             print(
-                f"    Min/Max:        {s['min_ms']:.2f} / {s['max_ms']:.2f} ms")
-            print(f"    Success rate:   {s['success_rate']:.1%}")
+                f"    Min/Max:        {h_stats['min_ms']:.2f} / {h_stats['max_ms']:.2f} ms")
+            print(f"    Success rate:   {h_stats['success_rate']:.1%}")
 
         print("\nQuery Types:")
-        for qtype, s in self.stats["query_types"].items():
-            print(f"  {qtype}:")
-            print(f"    Count:          {s['count']}")
-            print(f"    Avg time:       {s['avg_ms']:.2f} ms")
+        for q_type, q_stats in self.stats["query_types"].items():
+            print(f"  {q_type}:")
+            print(f"    Count:          {q_stats['count']}")
+            print(f"    Avg time:       {q_stats['avg_ms']:.2f} ms")
             print(
-                f"    Min/Max:        {s['min_ms']:.2f} / {s['max_ms']:.2f} ms")
-            print(f"    Success rate:   {s['success_rate']:.1%}")
+                f"    Min/Max:        {q_stats['min_ms']:.2f} / {q_stats['max_ms']:.2f} ms")
+            print(f"    Success rate:   {q_stats['success_rate']:.1%}")
 
         print("\n=========================\n")
 
@@ -750,7 +757,7 @@ class QueryManager:
             "avg_time_ms": avg_time,
             "cached_queries": self.stats["cached_queries"],
             "handlers": self.stats["handlers"],
-            "query_types": self.stats["query_types"]
+            "query_types": self.stats["query_types"],
         }
 
 
@@ -760,10 +767,10 @@ class QueryManager:
 
 
 def process_query_unified(
-        query: str,
+        user_query: str,
         top_k: int = 10,
         **kwargs
-) -> Tuple[List[Any],       # results from semantic search
+) -> tuple[list[Any],       # results from semantic search
            Optional[str],             # answer
            Any,             # publication_date_info
            Optional[bool]   # score_too_low
@@ -774,21 +781,21 @@ def process_query_unified(
     Returns same format as perform_federated_search() for easy migration.
 
     Args:
-        query: User query
+        user_query: User query
         top_k: Number of results
         **kwargs: Additional context
 
     Returns:
-        Tuple of (results, answer, publication_date_info, score_too_low)
+        tuple of (results, answer, publication_date_info, score_too_low)
     """
-    manager = QueryManager()
-    result = manager.process_query(query, top_k=top_k, **kwargs)
+    query_mgr = QueryManager()
+    query_result = query_mgr.process_query(user_query, top_k=top_k, **kwargs)
 
     return (
-        result.results,
-        result.answer,
-        result.publication_date_info,
-        result.score_too_low
+        query_result.results,
+        query_result.answer,
+        query_result.publication_date_info,
+        query_result.score_too_low
     )
 
 
@@ -821,9 +828,9 @@ if __name__ == "__main__":
     print("Query Manager Test Run")
     print("=" * 80)
 
-    for query in test_queries:
-        print(f"\n📝 Query: {query}")
-        result = manager.process_query(query)
+    for test_query in test_queries:
+        print(f"\n📝 Query: {test_query}")
+        result = manager.process_query(test_query)
         print(f"✅ Type: {result.query_type}")
         print(f"⏱️  Time: {result.processing_time_ms:.2f}ms")
         print(f"📊 Handler: {result.handler_used}")
@@ -841,8 +848,8 @@ if __name__ == "__main__":
     print(f"Cached queries: {stats['cached_queries']}")
 
     print("\nHandlers:")
-    for handler, s in stats["handlers"].items():
-        print(f"  {handler}: {s['count']} uses")
+    for handler_name, s in stats["handlers"].items():
+        print(f"  {handler_name}: {s['count']} uses")
 
     print("\nQuery Types:")
     for qtype, s in stats["query_types"].items():

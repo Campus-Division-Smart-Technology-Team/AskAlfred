@@ -9,10 +9,12 @@ import csv
 import json
 import logging
 import argparse
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, Any
 from datetime import datetime
 from dotenv import load_dotenv
 from pinecone import Pinecone
+from pinecone_utils import desanitise_metadata_from_pinecone
+from alfred_exceptions import ConfigError
 
 # ---------------- Env & constants ----------------
 load_dotenv()
@@ -25,18 +27,18 @@ logging.basicConfig(
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 if not PINECONE_API_KEY:
-    raise RuntimeError("PINECONE_API_KEY is not set")
+    raise ConfigError("PINECONE_API_KEY is not set")
 
 # Initialise Pinecone client
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
 
-def get_all_namespaces(index) -> List[str]:
+def get_all_namespaces(index) -> list[str]:
     """
     Get all namespaces in the index.
 
     Returns:
-        List of namespace names (empty string for default namespace)
+        list of namespace names (empty string for default namespace)
     """
     try:
         stats = index.describe_index_stats()
@@ -60,7 +62,7 @@ def get_all_namespaces(index) -> List[str]:
         return [""]
 
 
-def get_all_vector_ids(index, namespace: Optional[str] = None) -> List[str]:
+def get_all_vector_ids(index, namespace: Optional[str] = None) -> list[str]:
     """Get all vector IDs from the index using the list method."""
     all_ids = []
 
@@ -83,22 +85,22 @@ def get_all_vector_ids(index, namespace: Optional[str] = None) -> List[str]:
 
 
 def discover_all_metadata_fields(
-    index,
-    all_ids: List[str],
+    index: Any,
+    all_ids: list[str],
     namespace: Optional[str] = None,
     sample_size: int = 500
-) -> Set[str]:
+) -> set[str]:
     """
     Discover ALL metadata fields by sampling vectors.
 
     Args:
         index: Pinecone index object
-        all_ids: List of all vector IDs
+        all_ids: list of all vector IDs
         namespace: Namespace to query
         sample_size: Number of vectors to sample for field discovery
 
     Returns:
-        Set of all unique metadata field names
+        set of all unique metadata field names
     """
     all_fields = set()
 
@@ -131,7 +133,9 @@ def discover_all_metadata_fields(
             response = index.fetch(ids=batch, namespace=namespace)
             if response and response.vectors:
                 for vector_data in response.vectors.values():
-                    metadata = vector_data.metadata or {}
+                    metadata = desanitise_metadata_from_pinecone(
+                        vector_data.metadata or {}
+                    )
                     all_fields.update(metadata.keys())
         except Exception as e:
             logging.warning("Error fetching sample batch: %s", e)
@@ -179,10 +183,10 @@ def format_value_for_csv(value: Any) -> str:
 
 
 def export_namespace_to_csv(
-    index,
+    index: Any,
     namespace: Optional[str],
-    all_ids: List[str],
-    metadata_fields: Set[str],
+    all_ids: list[str],
+    metadata_fields: set[str],
     output_path: str,
     append_mode: bool = False
 ) -> int:
@@ -192,8 +196,8 @@ def export_namespace_to_csv(
     Args:
         index: Pinecone index object
         namespace: Namespace to export (None for default)
-        all_ids: List of vector IDs in this namespace
-        metadata_fields: Set of all metadata field names
+        all_ids: list of vector IDs in this namespace
+        metadata_fields: set of all metadata field names
         output_path: Path to output CSV file
         append_mode: Whether to append to existing file
 
@@ -271,7 +275,9 @@ def export_namespace_to_csv(
                 # Process each vector in the batch
                 batch_count = 0
                 for vector_id, vector_data in response.vectors.items():
-                    metadata = vector_data.metadata or {}
+                    metadata = desanitise_metadata_from_pinecone(
+                        vector_data.metadata or {}
+                    )
 
                     # Build row dynamically
                     # ID and namespace first
@@ -351,7 +357,7 @@ def export_index_to_csv(
 
         for ns in namespaces_to_export:
             ns_display = ns if ns else "default"
-            logging.info("\n" + "=" * 70)
+            logging.info("%s", "\n" + "=" * 70)
             logging.info("Processing namespace: %s", ns_display)
             logging.info("=" * 70)
 
@@ -378,7 +384,7 @@ def export_index_to_csv(
             logging.error("No data to export!")
             return
 
-        logging.info("\n" + "=" * 70)
+        logging.info("%s", "\n" + "=" * 70)
         logging.info("METADATA FIELD SUMMARY")
         logging.info("=" * 70)
         logging.info("Total unique metadata fields across all namespaces: %d",
@@ -394,7 +400,7 @@ def export_index_to_csv(
 
         for ns, vector_ids in namespace_data.items():
             ns_display = ns if ns else "default"
-            logging.info("\n" + "=" * 70)
+            logging.info("%s", "\n" + "=" * 70)
             logging.info("EXPORTING NAMESPACE: %s", ns_display)
             logging.info("=" * 70)
 
@@ -414,7 +420,7 @@ def export_index_to_csv(
                          ns_display, count)
 
         # Final summary
-        logging.info("\n" + "=" * 70)
+        logging.info("%s", "\n" + "=" * 70)
         logging.info("EXPORT COMPLETED SUCCESSFULLY!")
         logging.info("=" * 70)
         logging.info("Total vectors exported: %d", total_exported)
@@ -437,8 +443,8 @@ def parse_args():
     )
     parser.add_argument(
         "--index",
-        default="local-docs",
-        help="Pinecone index name (default: local-docs)"
+        default="test",
+        help="Pinecone index name (default: test)"
     )
     parser.add_argument(
         "--output",
@@ -483,13 +489,13 @@ if __name__ == "__main__":
             sample_size=args.sample_size
         )
 
-        print(f"\n✅ Export completed successfully!")
+        print("\n✅ Export completed successfully!")
         print(f"📄 Output file: {output_file}")
 
     except KeyboardInterrupt:
-        logging.warning("\n⚠️  Export interrupted by user")
-        print("\n⚠️  Export interrupted")
+        logging.warning("\n ⚠️ Export interrupted by user")
+        print("\n ⚠️ Export interrupted")
     except Exception as e:
         logging.error("Export failed: %s", e, exc_info=True)
-        print(f"\n❌ Export failed: {e}")
+        print(f"\n ❌ Export failed: {e}")
         exit(1)

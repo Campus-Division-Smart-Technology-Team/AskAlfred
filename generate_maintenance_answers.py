@@ -1,16 +1,18 @@
 from __future__ import annotations
-from typing import (Any, Dict, cast, Optional)
+from typing import (Any, cast, Optional)
 
 import json
 import logging
 import re
 from pinecone_utils import open_index
-from building_utils import (BuildingCacheManager,)
-from building_validation import sanitise_building_candidate
+from building.utils import (BuildingCacheManager,)
+from building.validation import sanitise_building_candidate
 from maintenance_utils import (filter_maintenance_buildings,)
 from maintenance_utils import (
-    aggregate_request_metrics_by_category, aggregate_request_metrics, is_request_metrics, format_multi_building_metrics, parse_maintenance_query,)
-from emojis import EMOJI_SEARCH, EMOJI_TICK, EMOJI_CROSS, EMOJI_CAUTION, EMOJI_BRAIN, EMOJI_BUILDING, EMOJI_CHART, EMOJI_CLIPBOARD
+    aggregate_request_metrics_by_category, aggregate_request_metrics,
+    is_request_metrics, format_multi_building_metrics, parse_maintenance_query,)
+from emojis import (EMOJI_SEARCH, EMOJI_TICK, EMOJI_CROSS, EMOJI_CAUTION,
+                    EMOJI_BRAIN, EMOJI_BUILDING, EMOJI_CHART, EMOJI_CLIPBOARD)
 
 
 def generate_maintenance_answer(
@@ -93,7 +95,7 @@ def generate_maintenance_answer(
         include_metadata=True,
     )
     response = raw.to_dict() if hasattr(
-        raw, "to_dict") else cast(Dict[str, Any], raw)
+        raw, "to_dict") else cast(dict[str, Any], raw)
     matches = response.get("matches", [])
     logging.info(
         "%s Retrieved %d maintenance building vectors from Pinecone", EMOJI_CHART, len(matches))
@@ -248,7 +250,7 @@ def generate_maintenance_answer(
             return f"{EMOJI_CROSS}  No buildings match that maintenance query."
 
     # --- Build a deduped map: building -> status_totals ---
-    building_status_map: Dict[str, Dict[str, int]] = {}
+    building_status_map: dict[str, dict[str, int]] = {}
 
     for m in filtered:
         md = m.get("metadata", {}) or {}
@@ -289,7 +291,7 @@ def generate_maintenance_answer(
 
         else:
             # Jobs: category -> status -> count
-            status_totals: Dict[str, int] = {}
+            status_totals: dict[str, int] = {}
             for cat_name, statuses in metrics.items():
                 # If category filter is specified, only process that category
                 if category and cat_name.lower() != category.lower():
@@ -322,7 +324,7 @@ def generate_maintenance_answer(
 
     # --- Take top 10 buildings for display ---
     top_buildings = [b for b, _ in ranked[:10]]
-    trimmed_stats: Dict[str, Dict[str, int]] = {
+    trimmed_stats: dict[str, dict[str, int]] = {
         b: building_status_map[b] for b in top_buildings}
 
     # ✅ Delegate the entire rendering to the multi-building formatter

@@ -8,17 +8,17 @@ Logging at INFO level for query tracing
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List, cast, Optional
+from typing import Any, cast, Optional
 import logging
 import re
 from collections import defaultdict
 from maintenance_utils import _plural
 from pinecone_utils import open_index, query_all_chunks
-from config import TARGET_INDEXES, resolve_namespace, normalise_ns, get_display_namespace
-from building_utils import (BuildingCacheManager,
-                            normalise_building_name,
-                            extract_building_from_query)
-from building_validation import sanitise_building_candidate
+from config import TARGET_INDEXES, _route_namespace, normalise_ns, get_display_namespace
+from building import (BuildingCacheManager,
+                      normalise_building_name,
+                      extract_building_from_query)
+from building import sanitise_building_candidate
 from generate_maintenance_answers import generate_maintenance_answer
 from emojis import (EMOJI_TICK, EMOJI_CHART, EMOJI_REPEAT, EMOJI_BRAIN,
                     EMOJI_CROSS, EMOJI_CLIPBOARD, EMOJI_CAUTION, EMOJI_SEARCH, EMOJI_INIT,)
@@ -191,7 +191,7 @@ def is_yes_no_property_condition_question(query: str) -> bool:
 
 def query_property_by_condition(condition: str,
                                 building_filter: Optional[str] = None,
-                                index_names: Optional[List[str]] = None) -> Dict[str, Any]:
+                                index_names: Optional[list[str]] = None) -> dict[str, Any]:
     """
     Query buildings by property condition from the 'planon_data' namespace.
     Optionally filter by a specific building.
@@ -201,7 +201,7 @@ def query_property_by_condition(condition: str,
 
     namespace = 'planon_data'
     canonical_condition = condition
-    matching_buildings: List[Dict[str, Any]] = []
+    matching_buildings: list[dict[str, Any]] = []
 
     building_l = building_filter.lower().strip() if building_filter else None
 
@@ -244,7 +244,7 @@ def rank_buildings_by_area(
     area_type: str = "gross",
     order: str = "desc",
     limit: Optional[int] = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Rank buildings by gross or net area from Planon data vectors in Pinecone.
 
@@ -254,7 +254,7 @@ def rank_buildings_by_area(
         limit: max number of buildings to return (default: None → all)
 
     Returns:
-        Dict structured for generate_ranking_answer().
+        dict structured for generate_ranking_answer().
     """
     logging.info("%s rank_buildings_by_area() called - area_type='%s', order='%s', limit=%s", EMOJI_CHART,
                  area_type, order, limit)
@@ -267,7 +267,7 @@ def rank_buildings_by_area(
     logging.info("   Using metadata field: '%s'", area_key)
 
     namespace = "planon_data"
-    buildings: Dict[str, Dict[str, Any]] = {}
+    buildings: dict[str, dict[str, Any]] = {}
 
     # Fetch all vectors from each target index
     logging.info("%s Querying %d target indexes for namespace '%s'", EMOJI_INIT,
@@ -398,9 +398,9 @@ def _dedupe_matches_by_key(matches):
 def _query_index_with_batches(
     idx_name: str,
     namespace: Optional[str],
-    filter_dict: Optional[Dict[str, Any]] = None,
+    filter_dict: Optional[dict[str, Any]] = None,
     top_k: int = DEFAULT_BATCH_TOP_K,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Query a Pinecone index in batches with optional filters.
     Returns all matches from all batches combined and deduplicated.
@@ -452,9 +452,9 @@ def _query_index_with_batches(
 def _query_index_with_fallback(
     idx_name: str,
     primary_namespace: Optional[str],
-    filter_dict: Optional[Dict[str, Any]] = None,
+    filter_dict: Optional[dict[str, Any]] = None,
     top_k: int = DEFAULT_BATCH_TOP_K,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Query index with fallback to alternative namespaces if primary returns no results.
 
@@ -464,7 +464,7 @@ def _query_index_with_fallback(
     - Case sensitivity issues in namespace names
 
     Returns:
-        List of matches from the first successful namespace query
+        list of matches from the first successful namespace query
     """
     # Try primary namespace first
     logging.info(
@@ -524,7 +524,7 @@ def _query_index_with_fallback(
     return []
 
 
-def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str, Any]:
+def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> dict[str, Any]:
     """
     Diagnostic function to identify where maintenance data actually exists in Pinecone.
 
@@ -594,12 +594,12 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
 
                 # ✅ Convert to dictionary — safe for Pylance
                 # ✅ Tell Pylance to treat the response as Any (runtime-safe)
-                response_dict: Dict[str, Any] = cast(Any, response).to_dict()
+                response_dict: dict[str, Any] = cast(Any, response).to_dict()
 
-                matches: List[Dict[str, Any]
+                matches: list[dict[str, Any]
                               ] = response_dict.get("matches", [])
 
-                doc_types: Dict[str, int] = {}
+                doc_types: dict[str, int] = {}
                 building_count = 0
 
                 for match in matches:
@@ -679,7 +679,7 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> Dict[str,
         return result
 
 
-def create_building_filter(building_name: str) -> Dict[str, Any]:
+def create_building_filter(building_name: str) -> dict[str, Any]:
     """
     Create a Pinecone filter for a building name, checking both
     canonical_building_name and building_name fields.
@@ -702,7 +702,7 @@ def create_building_filter(building_name: str) -> Dict[str, Any]:
     }
 
 
-def create_document_building_filter(building_name: str) -> Dict[str, Any]:
+def create_document_building_filter(building_name: str) -> dict[str, Any]:
     """
     Create a Pinecone filter for a building name, checking only
     canonical_building_name.
@@ -964,7 +964,7 @@ def generate_counting_answer(query: str) -> Optional[str]:
 
     for idx in TARGET_INDEXES:
 
-        ns = resolve_namespace(doc_type)  # based on query intent
+        ns = _route_namespace(doc_type)  # based on query intent
         matches = _query_index_with_batches(idx, ns, filter_dict)
         for m in matches:
             md = m.get("metadata", {}) or {}
@@ -996,7 +996,7 @@ def generate_counting_answer(query: str) -> Optional[str]:
         ans += f"**Total documents:** {sum(len(keys) for keys in keys_by_bldg.values())}\n\n"
 
         show = min(10, count)
-        ans += f"**Listing {show} building(s):**\n"
+        ans += f"**listing {show} building(s):**\n"
         for b in buildings[:show]:
             docs_b = len(keys_by_bldg[b])
             ans += f"- **{b}** ({docs_b} {_plural(docs_b, 'doc')})\n"

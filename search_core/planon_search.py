@@ -1,6 +1,4 @@
 # search_core/planon_search.py
-
-from typing import Dict, List, Tuple
 from structured_queries import (
     generate_property_condition_answer,
     generate_ranking_answer,

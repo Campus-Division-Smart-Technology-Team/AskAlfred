@@ -6,8 +6,17 @@ Enhanced with building cache status display.
 """
 
 import streamlit as st
-from config import TARGET_INDEXES, SEARCH_ALL_NAMESPACES, DEFAULT_NAMESPACE, MIN_SCORE_THRESHOLD
-from building_utils import get_building_names_from_cache, get_cache_status
+from config import (
+    TARGET_INDEXES,
+    SEARCH_ALL_NAMESPACES,
+    DEFAULT_NAMESPACE,
+    MIN_SCORE_THRESHOLD,
+    UI_TOP_K_MIN,
+    UI_TOP_K_MAX,
+    UI_TOP_K_DEFAULT,
+    UI_SNIPPET_MAX_CHARS,
+)
+from building import get_building_names_from_cache, get_cache_status
 
 
 def setup_page_config():
@@ -204,8 +213,14 @@ def render_sidebar():
 
         st.markdown("---")
 
-        top_k = st.slider("Results per query", min_value=1,
-                          max_value=25, value=5, step=1, help="Number of results to return per query")
+        top_k = st.slider(
+            "Results per query",
+            min_value=UI_TOP_K_MIN,
+            max_value=UI_TOP_K_MAX,
+            value=UI_TOP_K_DEFAULT,
+            step=1,
+            help="Number of results to return per query",
+        )
 
         if "generate_llm_answer" not in st.session_state:
             st.session_state.generate_llm_answer = True
@@ -272,7 +287,11 @@ def display_search_results(results):
                 st.caption(f"🏢 Building: {building_name}")
 
             snippet = result.get("text") or "_(no text in metadata)_"
-            st.write(snippet[:500] + "..." if len(snippet) > 500 else snippet)
+            st.write(
+                snippet[:UI_SNIPPET_MAX_CHARS] + "..."
+                if len(snippet) > UI_SNIPPET_MAX_CHARS
+                else snippet
+            )
             st.caption(f"ID: {result.get('id') or '—'}")
 
             if i < len(results):

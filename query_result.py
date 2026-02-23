@@ -14,7 +14,7 @@ Handlers may enrich metadata as needed.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -43,7 +43,7 @@ class QueryResult:
     answer: Optional[str]
 
     # Optional structured results (semantic search, SQL rows, etc.)
-    results: List[Any] = field(default_factory=list)
+    results: list[Any] = field(default_factory=list)
 
     # Which handler produced the response
     handler_used: Optional[str] = None
@@ -61,7 +61,7 @@ class QueryResult:
     publication_date_info: Any = None
     score_too_low: Optional[bool] = None
 
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         # Guarantee metadata is always a dict
@@ -76,7 +76,7 @@ class QueryResult:
         """Add a single metadata item."""
         self.metadata[key] = value
 
-    def merge_metadata(self, data: Dict[str, Any]) -> None:
+    def merge_metadata(self, data: dict[str, Any]) -> None:
         """Merge multiple metadata values safely."""
         if data:
             for k, v in data.items():
@@ -84,7 +84,7 @@ class QueryResult:
                 if k not in self.metadata:
                     self.metadata[k] = v
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert result to a dict (safe for transport or API output).
         """

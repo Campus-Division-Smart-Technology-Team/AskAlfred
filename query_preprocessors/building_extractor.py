@@ -1,13 +1,12 @@
 # building_extractor.py
 
 from query_preprocessors.base_preprocessor import CachingPreprocessor
-from building_utils import (
+from building.utils import (
     extract_building_from_query,
     get_building_names_from_cache,
-    resolve_building_name_fuzzy,
     BuildingCacheManager
 )
-from building_validation import is_valid_building_name
+from building.validation import is_valid_building_name
 from emojis import EMOJI_TICK
 
 

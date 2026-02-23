@@ -1,9 +1,24 @@
 # session_manager.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
 import time
 from contextlib import contextmanager
+from config import (
+    SESSION_LONG_MESSAGE_LENGTH,
+    SESSION_HIGH_CONFIDENCE_THRESHOLD,
+    SESSION_SUMMARY_PREVIEW_LEN,
+    SESSION_SUMMARY_MAX_KEY_POINTS,
+    SESSION_IMPORTANT_KEEP_RATIO,
+    SESSION_IMPORTANT_MIN_KEEP,
+    SESSION_IMPORTANCE_BASELINE,
+    SESSION_IMPORTANCE_USER_BONUS,
+    SESSION_IMPORTANCE_INTENT_BONUS,
+    SESSION_IMPORTANCE_BUILDING_BONUS,
+    SESSION_IMPORTANCE_CONFIDENCE_BONUS,
+    SESSION_IMPORTANCE_ERROR_BONUS,
+    SESSION_IMPORTANCE_LONG_MESSAGE_BONUS,
+)
 
 try:
     import streamlit as st
@@ -11,7 +26,7 @@ except ImportError:
     st = None  # allow non-Streamlit contexts
 
 # Module-level storage for non-Streamlit contexts
-_fallback_store: Dict[str, Any] = {}
+_fallback_store: dict[str, Any] = {}
 
 # ---------- Data models ----------
 
@@ -20,11 +35,11 @@ _fallback_store: Dict[str, Any] = {}
 class ChatMessage:
     role: str                 # "user" | "assistant" | "system"
     content: str
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[dict[str, Any]] = None
     ts: Optional[float] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        d: Dict[str, Any] = {"role": self.role, "content": self.content}
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"role": self.role, "content": self.content}
         if self.metadata:
             d["metadata"] = self.metadata
         if self.ts:
@@ -34,7 +49,7 @@ class ChatMessage:
 
 @dataclass
 class ConversationState:
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     rolling_summary: str = ""             # compact summary of prior turns
     tokens_budget: int = 1200             # soft cap for "context window"
     window_turns: int = 6                 # last N turns for short-term memory
@@ -45,11 +60,11 @@ class ConversationState:
     last_intent: Optional[str] = None
     last_building: Optional[str] = None
     last_handler: Optional[str] = None
-    last_query_context: Optional[Dict[str, Any]] = None
+    last_query_context: Optional[dict[str, Any]] = None
     last_intent_confidence: Optional[float] = None
 
 
-def _get_store() -> Dict[str, Any]:
+def _get_store() -> dict[str, Any]:
     """Return a dict that behaves in Streamlit or plain Python."""
     if st is not None:
         if "alfred_session" not in st.session_state:
@@ -121,14 +136,14 @@ class SessionManager:
         _ = _get_store()  # ensures state exists
 
     @staticmethod
-    def add_user_message(text: str, metadata: Optional[Dict[str, Any]] = None):
+    def add_user_message(text: str, metadata: Optional[dict[str, Any]] = None):
         with _get_conversation_state() as state:
             state.messages.append(
                 ChatMessagerole="user", content=text, metadata=metadata or {}, ts=time.time())
             SessionManager._update_rolling_summary(state)
 
     @staticmethod
-    def add_assistant_message(text: str, metadata: Optional[Dict[str, Any]] = None):
+    def add_assistant_message(text: str, metadata: Optional[dict[str, Any]] = None):
         with _get_conversation_state() as state:
             state.messages.append(
                 ChatMessagerole="assistant", content=text, metadata=metadata or {}, ts=time.time())
@@ -136,7 +151,7 @@ class SessionManager:
         SessionManager._update_rolling_summary(state)
 
     @staticmethod
-    def get_context_window(max_turns: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_context_window(max_turns: Optional[int] = None) -> list[dict[str, Any]]:
         """Return the last N turns (user+assistant pairs) as dicts for prompts/handlers."""
         with _get_conversation_state() as state:
             n = max_turns or state.window_turns
@@ -434,13 +449,14 @@ class SessionManagerAdvanced:
 
     # --- Helper Constants for Readability ---
     # Thresholds for importance scoring
-    _LONG_MESSAGE_LENGTH = 200
-    _HIGH_CONFIDENCE_THRESHOLD = 0.8
+    _LONG_MESSAGE_LENGTH = SESSION_LONG_MESSAGE_LENGTH
+    _HIGH_CONFIDENCE_THRESHOLD = SESSION_HIGH_CONFIDENCE_THRESHOLD
 
     # Summary tuning parameters
-    _DEFAULT_SUMMARY_PREVIEW_LEN = 100
-    _SUMMARY_MAX_KEY_POINTS = 15
-    _IMPORTANT_MESSAGES_KEEP_RATIO = 5  # Keep 1/5th of important messages
+    _DEFAULT_SUMMARY_PREVIEW_LEN = SESSION_SUMMARY_PREVIEW_LEN
+    _SUMMARY_MAX_KEY_POINTS = SESSION_SUMMARY_MAX_KEY_POINTS
+    # Keep 1/5th of important messages
+    _IMPORTANT_MESSAGES_KEEP_RATIO = SESSION_IMPORTANT_KEEP_RATIO
 
     @staticmethod
     def _score_message_importance(msg: ChatMessage) -> float:
@@ -448,35 +464,35 @@ class SessionManagerAdvanced:
         Score a message's importance (0-1) to decide if it should be kept.
         Higher scores mean more important messages.
         """
-        score = 0.5  # baseline
+        score = SESSION_IMPORTANCE_BASELINE  # baseline
 
         # User questions are generally important
         if msg.role == "user":
-            score += 0.1
+            score += SESSION_IMPORTANCE_USER_BONUS
 
         # Metadata indicates the message was significant
         if msg.metadata:
             # Intent classification suggests structured query
             if msg.metadata.get("intent") or msg.metadata.get("query_type"):
-                score += 0.2
+                score += SESSION_IMPORTANCE_INTENT_BONUS
 
             # Building mentioned = specific context to preserve
             if msg.metadata.get("building"):
-                score += 0.15
+                score += SESSION_IMPORTANCE_BUILDING_BONUS
 
             # High confidence predictions are reliable
             confidence = msg.metadata.get("ml_intent_confidence", 0)
             if confidence > SessionManagerAdvanced._HIGH_CONFIDENCE_THRESHOLD:
-                score += 0.1
+                score += SESSION_IMPORTANCE_CONFIDENCE_BONUS
 
             # Error states should be remembered
             if msg.metadata.get("error") or msg.metadata.get("warning"):
-                score += 0.2
+                score += SESSION_IMPORTANCE_ERROR_BONUS
 
         # Long messages might have more information
         content_length = len(msg.content or "")
         if content_length > SessionManagerAdvanced._LONG_MESSAGE_LENGTH:
-            score += 0.05
+            score += SESSION_IMPORTANCE_LONG_MESSAGE_BONUS
 
         return min(score, 1.0)  # Cap at 1.0
 
@@ -506,7 +522,7 @@ class SessionManagerAdvanced:
         scored_messages.sort(key=lambda x: x[1], reverse=True)
 
         # Keep top N% of important messages, summarize the rest
-        keep_count = max(5, len(scored_messages) //
+        keep_count = max(SESSION_IMPORTANT_MIN_KEEP, len(scored_messages) //
                          SessionManagerAdvanced._IMPORTANT_MESSAGES_KEEP_RATIO)
         messages_to_keep_full = [msg for msg,
                                  score in scored_messages[:keep_count]]

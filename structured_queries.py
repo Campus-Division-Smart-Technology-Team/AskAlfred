@@ -22,7 +22,7 @@ from building import (BuildingCacheManager,
 from building import sanitise_building_candidate
 from generate_maintenance_answers import generate_maintenance_answer
 from log_sanitiser import sanitise_error
-from input_validator import sanitize_pinecone_filter, validate_building_name
+from input_validator import sanitise_pinecone_filter, validate_building_name
 from emojis import (EMOJI_TICK, EMOJI_CHART, EMOJI_REPEAT, EMOJI_BRAIN,
                     EMOJI_CROSS, EMOJI_CLIPBOARD, EMOJI_CAUTION, EMOJI_SEARCH, EMOJI_INIT,)
 
@@ -766,7 +766,7 @@ def create_building_filter(building_name: str) -> dict[str, Any]:
     }
 
     # Sanitize the complete filter to ensure no injection attacks
-    return sanitize_pinecone_filter(filter_dict)
+    return sanitise_pinecone_filter(filter_dict)
 
 
 def create_document_building_filter(building_name: str) -> dict[str, Any]:
@@ -792,7 +792,7 @@ def create_document_building_filter(building_name: str) -> dict[str, Any]:
     }
 
     # Sanitize the complete filter to ensure no injection attacks
-    return sanitize_pinecone_filter(filter_dict)
+    return sanitise_pinecone_filter(filter_dict)
 
 # -----------------------------------------------------------------------------
 # Property Condition + Ranking

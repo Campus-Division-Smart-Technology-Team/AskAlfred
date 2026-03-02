@@ -140,7 +140,7 @@ class _RowParserMixin:
             r"|\d{1,2}[/-]\d{1,2}[/-]\d{4})"
         )
         complete_match = re.search(
-            rf"Complete\s*[--:]\s*({date_token})",
+            rf"Complete\s*(?:-|:)\s*({date_token})",
             content,
             re.IGNORECASE,
         )
@@ -149,10 +149,17 @@ class _RowParserMixin:
             content,
             re.IGNORECASE,
         )
+        complete_loose_match = re.search(
+            rf"(?:checked\s+as\s+complete|complete(?:d)?)\s*(?:[-:])?\s*({date_token})",
+            content,
+            re.IGNORECASE,
+        )
         if complete_match:
             parsed["actual_completion_date"] = complete_match.group(1)
         if completed_match and not parsed["actual_completion_date"]:
             parsed["actual_completion_date"] = completed_match.group(1)
+        if complete_loose_match and not parsed["actual_completion_date"]:
+            parsed["actual_completion_date"] = complete_loose_match.group(1)
 
         # Extract dates
         date_patterns = [

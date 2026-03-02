@@ -15,6 +15,11 @@ def _load_parser(repo_root: Path):
         return value
 
     setattr(stub_date_utils, "parse_date_to_iso", parse_date_to_iso)
+
+    def parse_iso_date(value):
+        return value
+
+    setattr(stub_date_utils, "parse_iso_date", parse_iso_date)
     sys.modules["date_utils"] = stub_date_utils
 
     # Stub config package and load constant.py directly (avoids streamlit deps)

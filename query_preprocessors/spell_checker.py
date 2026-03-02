@@ -38,11 +38,13 @@ class SpellCheckPreprocessor(BasePreprocessor):
         self.protected_tokens = {
             "fra", "fras", "bms", "ahu", "hvac", "iq4", "o&m",
             "planon", "ppm", "ppm’s", "ppm's"
+            "goodbye",
         }
         self.protected_short_tokens = {
             "how", "what", "when", "where", "which", "who", "why",
             "do", "does", "did", "is", "are", "was", "were",
             "can", "could", "would", "should", "will", "shall",
+            "bye",
         }
         self.min_protected_token_len = 4
 

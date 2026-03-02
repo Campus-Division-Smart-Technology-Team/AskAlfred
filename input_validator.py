@@ -213,29 +213,29 @@ def validate_query_security(
 # PINECONE FILTER VALIDATION
 # ===========================================================================
 
-def sanitize_filter_value(value: str) -> str:
+def sanitise_filter_value(value: str) -> str:
     """
-    Sanitize filter value to prevent NoSQL injection in Pinecone filters.
+    Sanitise filter value to prevent NoSQL injection in Pinecone filters.
 
     Args:
-        value: Filter value to sanitize
+        value: Filter value to sanitise
 
     Returns:
-        Sanitized value safe for use in Pinecone filters
+        Sanitised value safe for use in Pinecone filters
     """
     if not isinstance(value, str):
         return str(value)
 
     # Remove any dangerous characters/operators
-    sanitized = value
+    sanitised = value
     for keyword in DANGEROUS_FILTER_KEYWORDS:
-        sanitized = re.sub(rf'\b{keyword}\b', '',
-                           sanitized, flags=re.IGNORECASE)
+        sanitised = re.sub(rf'\b{keyword}\b', '',
+                           sanitised, flags=re.IGNORECASE)
 
     # Escape special regex characters
-    sanitized = re.escape(sanitized)
+    sanitised = re.escape(sanitised)
 
-    return sanitized
+    return sanitised
 
 
 def validate_filter_operator(operator: str) -> bool:
@@ -251,20 +251,20 @@ def validate_filter_operator(operator: str) -> bool:
     return operator in ALLOWED_FILTER_OPERATORS
 
 
-def sanitize_pinecone_filter(filter_dict: dict) -> dict:
+def sanitise_pinecone_filter(filter_dict: dict) -> dict:
     """
-    Sanitize Pinecone filter dictionary to prevent injection attacks.
+    Sanitise Pinecone filter dictionary to prevent injection attacks.
 
     Args:
         filter_dict: Pinecone filter dictionary
 
     Returns:
-        Sanitized filter dictionary
+        Sanitised filter dictionary
     """
     if not isinstance(filter_dict, dict):
         return {}
 
-    sanitized = {}
+    sanitised = {}
 
     for key, value in filter_dict.items():
         # Check for dangerous key patterns
@@ -272,23 +272,23 @@ def sanitize_pinecone_filter(filter_dict: dict) -> dict:
             logger.warning("Dangerous filter key detected: %s", key)
             continue
 
-        # Sanitize based on value type
+        # Sanitise based on value type
         if isinstance(value, str):
-            sanitized[key] = sanitize_filter_value(value)
+            sanitised[key] = sanitise_filter_value(value)
         elif isinstance(value, dict):
             # Validate operators in nested filters
             for op, val in value.items():
                 if not validate_filter_operator(op):
                     logger.warning("Invalid filter operator: %s", op)
                     continue
-                sanitized.setdefault(key, {})[
-                    op] = sanitize_filter_value(str(val))
+                sanitised.setdefault(key, {})[
+                    op] = sanitise_filter_value(str(val))
         elif isinstance(value, (int, float, bool)):
-            sanitized[key] = value
+            sanitised[key] = value
         elif isinstance(value, list):
-            sanitized[key] = [sanitize_filter_value(str(v)) for v in value]
+            sanitised[key] = [sanitise_filter_value(str(v)) for v in value]
 
-    return sanitized
+    return sanitised
 
 
 # ===========================================================================

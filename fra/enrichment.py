@@ -10,7 +10,7 @@ import hashlib
 import re
 from datetime import datetime, date, timezone
 from typing import Optional
-from config import (DocumentTypes, FRA_RISK_ITEMS_NAMESPACE, RISK_LEVEL_MAP,)
+from config import (DocumentTypes, RISK_LEVEL_MAP,)
 from .types import CompletionStatus, RiskItem
 
 
@@ -62,7 +62,6 @@ class FRAEnricher:
 
         document_type = risk_item.get(
             "document_type") or DocumentTypes.FRA_RISK_ITEM
-        namespace = risk_item.get("namespace") or FRA_RISK_ITEMS_NAMESPACE
         is_current = risk_item.get("is_current")
         if is_current is None:
             is_current = True
@@ -73,7 +72,6 @@ class FRAEnricher:
             "risk_level_text": risk_level_text,
             "ingestion_timestamp": ingestion_timestamp,
             "document_type": document_type,
-            "namespace": namespace,
             "is_current": is_current,
             "superseded_by": superseded_by,
         }

@@ -524,7 +524,9 @@ def _query_index_with_fallback(
     return []
 
 
-def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> dict[str, Any]:
+def diagnose_maintenance_namespaces(
+    index_names: Optional[list[str]] = None,
+) -> dict[str, Any]:
     """
     Diagnostic function to identify where maintenance data actually exists in Pinecone.
 
@@ -534,149 +536,168 @@ def diagnose_maintenance_namespaces(index_name: str = "local-docs") -> dict[str,
     - Namespaces containing maintenance data
     """
 
-    result = {
-        "index": index_name,
-        "namespaces": {},
-        "maintenance_namespaces": [],
-        "recommendations": []
-    }
+    if index_names is None:
+        index_names = TARGET_INDEXES
 
-    try:
-        idx = open_index(index_name)
-        stats = idx.describe_index_stats()
+    # Defensive: allow a single index name passed accidentally
+    if isinstance(index_names, str):
+        index_names = [index_names]
 
-        logging.info("\n%s", "="*60)
-        logging.info("%s DIAGNOSTIC: Index stats for '%s'",
-                     EMOJI_CHART, index_name)
-        logging.info("%s", "="*60)
-        logging.info(
-            "  Total vectors: %d", stats.get('total_vector_count', 0))
-        logging.info("  Dimension: %d", stats.get('dimension', 0))
+    def _diagnose_single_index(index_name: str) -> dict[str, Any]:
+        result = {
+            "index": index_name,
+            "namespaces": {},
+            "maintenance_namespaces": [],
+            "recommendations": []
+        }
 
-        namespaces = stats.get("namespaces", {})
+        try:
+            idx = open_index(index_name)
+            stats = idx.describe_index_stats()
 
-        if not namespaces:
-            logging.warning("%s No namespaces found in index!", EMOJI_CAUTION)
-            result["recommendations"].append(
-                "CRITICAL: Index has no namespaces — check ingestion."
-            )
+            logging.info("\n%s", "="*60)
+            logging.info("%s DIAGNOSTIC: Index stats for '%s'",
+                         EMOJI_CHART, index_name)
+            logging.info("%s", "="*60)
+            logging.info(
+                "  Total vectors: %d", stats.get('total_vector_count', 0))
+            logging.info("  Dimension: %d", stats.get('dimension', 0))
+
+            namespaces = stats.get("namespaces", {})
+
+            if not namespaces:
+                logging.warning("%s No namespaces found in index!", EMOJI_CAUTION)
+                result["recommendations"].append(
+                    "CRITICAL: Index has no namespaces — check ingestion."
+                )
+                return result
+
+            # ----------------------------------------------------
+            # Inspect each namespace
+            # ----------------------------------------------------
+            for ns_name, ns_stats in namespaces.items():
+                vector_count = ns_stats.get("vector_count", 0)
+
+                result["namespaces"][ns_name] = {
+                    "vector_count": vector_count,
+                    "doc_types": set()
+                }
+
+                display_ns = ns_name or "__default__"
+                logging.info(
+                    "\n  Namespace '%s': %d vectors", display_ns, vector_count)
+
+                if vector_count == 0:
+                    continue
+
+                try:
+                    dim = stats.get("dimension", 1536)
+                    zero_vec = [0.0] * dim
+
+                    # Query Pinecone for a sample
+                    response = idx.query(
+                        vector=zero_vec,
+                        top_k=min(100, vector_count),
+                        namespace=ns_name or None,
+                        include_metadata=True
+                    )
+
+                    # ✅ Convert to dictionary — safe for Pylance
+                    # ✅ Tell Pylance to treat the response as Any (runtime-safe)
+                    response_dict: dict[str, Any] = cast(Any, response).to_dict()
+
+                    matches: list[dict[str, Any]
+                                  ] = response_dict.get("matches", [])
+
+                    doc_types: dict[str, int] = {}
+                    building_count = 0
+
+                    for match in matches:
+                        md = match.get("metadata", {}) or {}
+                        doc_type = md.get("document_type", "unknown")
+
+                        doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
+
+                        if md.get("building_name") or md.get("canonical_building_name"):
+                            building_count += 1
+
+                    result["namespaces"][ns_name]["doc_types"] = set(
+                        doc_types.keys())
+
+                    # Logging info
+                    logging.info("    Document types found:")
+                    for dt, count in sorted(doc_types.items(), key=lambda x: -x[1]):
+                        logging.info("      - %s: %d vectors (sample)", dt, count)
+
+                        if "maintenance" in dt.lower():
+                            result["maintenance_namespaces"].append({
+                                "namespace": ns_name,
+                                "doc_type": dt,
+                                "sample_count": count
+                            })
+
+                    logging.info(
+                        "    Vectors with building metadata: %d/%d", building_count, len(
+                            matches)
+                    )
+
+                except Exception as e:
+                    logging.warning(
+                        "%s Could not sample namespace '%s': %s", EMOJI_CAUTION, display_ns, e)
+                    result["namespaces"][ns_name]["error"] = str(e)
+
+            # ----------------------------------------------------
+            # Recommendations
+            # ----------------------------------------------------
+            logging.info("\n%s", "="*60)
+            logging.info("%s RECOMMENDATIONS", EMOJI_CLIPBOARD)
+            logging.info("%s", "="*60)
+
+            if result["maintenance_namespaces"]:
+                logging.info(
+                    "%s Found maintenance data in %d namespace(s):", EMOJI_TICK,
+                    len(result['maintenance_namespaces'])
+                )
+
+                for item in result["maintenance_namespaces"]:
+                    ns = item["namespace"] or "__default__"
+                    logging.info(
+                        "   - Namespace: %s\n     Doc type: %s\n     Sample count: %d",
+                        ns, item['doc_type'], item['sample_count']
+                    )
+                    result["recommendations"].append(
+                        f"✅ Use namespace '{ns}' for doc_type '{item['doc_type']}'"
+                    )
+            else:
+                logging.warning("⚠️ No maintenance data found in any namespace")
+                result["recommendations"].extend([
+                    "❌ No maintenance data detected",
+                    "💡 Verify maintenance data was ingested",
+                    "💡 Ensure `document_type` metadata is being set",
+                    "💡 Validate namespace mapping during ingestion"
+                ])
+
+            logging.info("%s\n", "="*60)
+
             return result
 
-        # ----------------------------------------------------
-        # Inspect each namespace
-        # ----------------------------------------------------
-        for ns_name, ns_stats in namespaces.items():
-            vector_count = ns_stats.get("vector_count", 0)
+        except Exception as e:
+            logging.error("%s Diagnostic failed: %s",
+                          EMOJI_CROSS, e, exc_info=True)
+            result["error"] = str(e)
+            result["recommendations"].append(f"CRITICAL ERROR: {e}")
+            return result
 
-            result["namespaces"][ns_name] = {
-                "vector_count": vector_count,
-                "doc_types": set()
-            }
+    results_by_index = {idx_name: _diagnose_single_index(idx_name)
+                        for idx_name in index_names}
 
-            display_ns = ns_name or "__default__"
-            logging.info(
-                "\n  Namespace '%s': %d vectors", display_ns, vector_count)
+    if len(results_by_index) == 1:
+        return next(iter(results_by_index.values()))
 
-            if vector_count == 0:
-                continue
-
-            try:
-                dim = stats.get("dimension", 1536)
-                zero_vec = [0.0] * dim
-
-                # Query Pinecone for a sample
-                response = idx.query(
-                    vector=zero_vec,
-                    top_k=min(100, vector_count),
-                    namespace=ns_name or None,
-                    include_metadata=True
-                )
-
-                # ✅ Convert to dictionary — safe for Pylance
-                # ✅ Tell Pylance to treat the response as Any (runtime-safe)
-                response_dict: dict[str, Any] = cast(Any, response).to_dict()
-
-                matches: list[dict[str, Any]
-                              ] = response_dict.get("matches", [])
-
-                doc_types: dict[str, int] = {}
-                building_count = 0
-
-                for match in matches:
-                    md = match.get("metadata", {}) or {}
-                    doc_type = md.get("document_type", "unknown")
-
-                    doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
-
-                    if md.get("building_name") or md.get("canonical_building_name"):
-                        building_count += 1
-
-                result["namespaces"][ns_name]["doc_types"] = set(
-                    doc_types.keys())
-
-                # Logging info
-                logging.info("    Document types found:")
-                for dt, count in sorted(doc_types.items(), key=lambda x: -x[1]):
-                    logging.info("      - %s: %d vectors (sample)", dt, count)
-
-                    if "maintenance" in dt.lower():
-                        result["maintenance_namespaces"].append({
-                            "namespace": ns_name,
-                            "doc_type": dt,
-                            "sample_count": count
-                        })
-
-                logging.info(
-                    "    Vectors with building metadata: %d/%d", building_count, len(
-                        matches)
-                )
-
-            except Exception as e:
-                logging.warning(
-                    "%s Could not sample namespace '%s': %s", EMOJI_CAUTION, display_ns, e)
-                result["namespaces"][ns_name]["error"] = str(e)
-
-        # ----------------------------------------------------
-        # Recommendations
-        # ----------------------------------------------------
-        logging.info("\n%s", "="*60)
-        logging.info("%s RECOMMENDATIONS", EMOJI_CLIPBOARD)
-        logging.info("%s", "="*60)
-
-        if result["maintenance_namespaces"]:
-            logging.info(
-                "%s Found maintenance data in %d namespace(s):", EMOJI_TICK,
-                len(result['maintenance_namespaces'])
-            )
-
-            for item in result["maintenance_namespaces"]:
-                ns = item["namespace"] or "__default__"
-                logging.info(
-                    "   - Namespace: %s\n     Doc type: %s\n     Sample count: %d",
-                    ns, item['doc_type'], item['sample_count']
-                )
-                result["recommendations"].append(
-                    f"✅ Use namespace '{ns}' for doc_type '{item['doc_type']}'"
-                )
-        else:
-            logging.warning("⚠️ No maintenance data found in any namespace")
-            result["recommendations"].extend([
-                "❌ No maintenance data detected",
-                "💡 Verify maintenance data was ingested",
-                "💡 Ensure `document_type` metadata is being set",
-                "💡 Validate namespace mapping during ingestion"
-            ])
-
-        logging.info("%s\n", "="*60)
-
-        return result
-
-    except Exception as e:
-        logging.error("%s Diagnostic failed: %s",
-                      EMOJI_CROSS, e, exc_info=True)
-        result["error"] = str(e)
-        result["recommendations"].append(f"CRITICAL ERROR: {e}")
-        return result
+    return {
+        "indexes": results_by_index,
+        "target_indexes": list(index_names),
+    }
 
 
 def create_building_filter(building_name: str) -> dict[str, Any]:

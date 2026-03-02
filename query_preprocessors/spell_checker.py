@@ -1,10 +1,16 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import logging
+import re
 from typing import Optional
 from textblob import TextBlob
 
 from query_preprocessors.base_preprocessor import BasePreprocessor
+from building import (
+    BuildingCacheManager,
+    BUILDING_ALIASES_CACHE,
+    BUILDING_NAMES_CACHE,
+    normalise_building_name,
+)
 
 
 class SpellCheckPreprocessor(BasePreprocessor):
@@ -12,11 +18,10 @@ class SpellCheckPreprocessor(BasePreprocessor):
     Optional spell checker using TextBlob.
 
     Safety/UX rules:
-      - Disabled by default (enable explicitly if you want it).
+      - Enabled by default.
       - Skips when TextBlob isn't available (no hard dependency).
-      - Skips when we've already detected a building or business terms,
-        to avoid "correcting" proper nouns or acronyms.
-      - Protects common domain tokens from being "corrected".
+      - Protects building names, business terms, and common domain tokens
+        from being "corrected".
     """
 
     # Module-level cache of the import to satisfy type checkers
@@ -24,7 +29,7 @@ class SpellCheckPreprocessor(BasePreprocessor):
 
     def __init__(self) -> None:
         super().__init__()
-        self.enabled = False  # opt-in only
+        self.enabled = True  # always on; protect building/domain tokens
         self.logger = logging.getLogger(self.__class__.__name__)
         self.corrections_made = 0
 
@@ -33,6 +38,86 @@ class SpellCheckPreprocessor(BasePreprocessor):
             "fra", "fras", "bms", "ahu", "hvac", "iq4", "o&m",
             "planon", "ppm", "ppm’s", "ppm's"
         }
+        self.protected_short_tokens = {
+            "how", "what", "when", "where", "which", "who", "why",
+            "do", "does", "did", "is", "are", "was", "were",
+            "can", "could", "would", "should", "will", "shall",
+        }
+        self.min_protected_token_len = 4
+
+    def _build_protected_tokens(self, context) -> list[str]:
+        tokens = set(self.protected_tokens)
+        min_len = self.min_protected_token_len
+
+        def _add_token(value: str) -> None:
+            if not isinstance(value, str):
+                return
+            v = value.strip()
+            if len(v) < min_len:
+                return
+            tokens.add(v)
+
+        # Ensure cache is ready and protect known aliases + canonical names
+        BuildingCacheManager.ensure_initialised()
+        if BUILDING_ALIASES_CACHE:
+            for alias in BUILDING_ALIASES_CACHE.keys():
+                _add_token(alias)
+                _add_token(normalise_building_name(alias))
+        if BUILDING_NAMES_CACHE:
+            for canonical in BUILDING_NAMES_CACHE.values():
+                _add_token(canonical)
+                _add_token(normalise_building_name(canonical))
+
+        # Protect detected building names (single or multiple)
+        if getattr(context, "building", None):
+            _add_token(context.building)
+            _add_token(normalise_building_name(context.building))
+        for b in getattr(context, "buildings", []) or []:
+            _add_token(b)
+            _add_token(normalise_building_name(b))
+
+        # Protect detected business terms
+        for term in getattr(context, "business_terms", []) or []:
+            if isinstance(term, dict):
+                t = term.get("term")
+                if t:
+                    _add_token(t)
+
+        # Always protect common short question/auxiliary tokens.
+        tokens.update(self.protected_short_tokens)
+
+        # Filter out empties and sort longest-first to avoid partial overlaps
+        return sorted(
+            {t for t in tokens if isinstance(t, str) and t.strip()},
+            key=len,
+            reverse=True,
+        )
+
+    def _protect_text(self, text: str, tokens: list[str]) -> tuple[str, list[tuple[str, str]]]:
+        """Replace protected tokens with placeholders; return new text + mapping."""
+        replacements: list[tuple[str, str]] = []
+        protected = text
+        counter = 0
+
+        for token in tokens:
+            pattern = re.compile(re.escape(token), re.IGNORECASE)
+
+            def _repl(match):
+                nonlocal counter
+                placeholder = f"ZXQPROT{counter}ZXQ"
+                counter += 1
+                replacements.append((placeholder, match.group(0)))
+                return placeholder
+
+            protected = pattern.sub(_repl, protected)
+
+        return protected, replacements
+
+    def _restore_text(self, text: str, replacements: list[tuple[str, str]]) -> str:
+        restored = text
+        for placeholder, original in replacements:
+            restored = restored.replace(placeholder, original)
+        return restored
 
     # -------- internal helpers -------- #
 
@@ -52,7 +137,6 @@ class SpellCheckPreprocessor(BasePreprocessor):
         Run only when:
           - enabled
           - TextBlob is available
-          - we haven't already detected specific entities that could be harmed
         """
         if not self.enabled:
             return False
@@ -61,19 +145,6 @@ class SpellCheckPreprocessor(BasePreprocessor):
             # If it's not installed, just stay quiet and disable ourselves
             self.logger.debug("TextBlob not available; skipping spell check.")
             self.enabled = False
-            return False
-
-        # If a building was already detected, don't risk "correcting" it
-        if context.get_from_cache("building_detected"):
-            return False
-
-        # If business terms (acronyms) were detected, skip
-        if getattr(context, "business_terms", None):
-            return False
-
-        # If the query contains any protected tokens, skip
-        q = (context.query or "").lower()
-        if any(tok in q for tok in self.protected_tokens):
             return False
 
         return True
@@ -90,8 +161,12 @@ class SpellCheckPreprocessor(BasePreprocessor):
             return
 
         try:
-            # Compute a candidate correction
-            corrected = str(textblob_cls(context.query).correct())
+            # Compute a candidate correction while protecting tokens
+            protected_tokens = self._build_protected_tokens(context)
+            protected_text, replacements = self._protect_text(
+                context.query, protected_tokens)
+            corrected = str(textblob_cls(protected_text).correct())
+            corrected = self._restore_text(corrected, replacements)
 
             if corrected != context.query:
                 self.corrections_made += 1
@@ -100,9 +175,8 @@ class SpellCheckPreprocessor(BasePreprocessor):
                 context.add_to_cache("original_query", context.query)
                 context.add_to_cache("spell_corrected", True)
 
-                # Update the query in-place (no update_query() method exists)
                 old_query = context.query
-                context.query = corrected
+                context.update_query(corrected)
 
                 self.logger.info(
                     "Corrected query: '%s' -> '%s'", old_query, corrected

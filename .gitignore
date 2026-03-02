@@ -17,6 +17,7 @@ __pycache__/
 *.json
 *.pklz
 *.jsonl
+*.out
 
 # embeddings + models
 intent_embeddings_cache.pkl

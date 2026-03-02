@@ -376,7 +376,7 @@ def search_source_for_latest_date(
         all_dates.sort(key=lambda x: (-x[4], -x[0].timestamp()))
 
         # Get the best date
-        latest_date_str, doc_id, source_type, priority = all_dates[0]
+        _, latest_date_str, doc_id, source_type, priority = all_dates[0]
 
         logging.info(
             "Selected date: '%s' (source: %s, priority: %d, from: %s)",

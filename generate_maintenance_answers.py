@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from pinecone_utils import open_index
+from config import TARGET_INDEXES
 from building.utils import (BuildingCacheManager,)
 from building.validation import sanitise_building_candidate
 from maintenance_utils import (filter_maintenance_buildings,)
@@ -78,27 +79,37 @@ def generate_maintenance_answer(
     namespace = "maintenance_jobs" if query_type == "jobs" else "maintenance_requests"
     logging.info("%s Using Pinecone namespace: %s", EMOJI_SEARCH, namespace)
 
-    idx = open_index("local-docs")
-    ns_details = idx.describe_index_stats().get("namespaces", {})
-    if namespace not in ns_details:
-        logging.warning(
-            "%s Namespace '%s' not found — available: %s", EMOJI_CAUTION, namespace, list(ns_details.keys()))
+    matches: list[dict[str, Any]] = []
+    for idx_name in TARGET_INDEXES:
+        idx = open_index(idx_name)
+        ns_details = idx.describe_index_stats().get("namespaces", {})
+        if namespace not in ns_details:
+            logging.warning(
+                "%s Namespace '%s' not found in index '%s' — available: %s",
+                EMOJI_CAUTION, namespace, idx_name, list(ns_details.keys()))
+            continue
 
-    # --- Query Pinecone for all vectors in namespace ---
-    dim = idx.describe_index_stats().get("dimension", 1536)
-    zero_vec = [0.0] * dim
+        # --- Query Pinecone for all vectors in namespace ---
+        dim = idx.describe_index_stats().get("dimension", 1536)
+        zero_vec = [0.0] * dim
 
-    raw: Any = idx.query(
-        vector=zero_vec,
-        top_k=2000,
-        namespace=namespace,
-        include_metadata=True,
-    )
-    response = raw.to_dict() if hasattr(
-        raw, "to_dict") else cast(dict[str, Any], raw)
-    matches = response.get("matches", [])
+        raw: Any = idx.query(
+            vector=zero_vec,
+            top_k=2000,
+            namespace=namespace,
+            include_metadata=True,
+        )
+        response = raw.to_dict() if hasattr(
+            raw, "to_dict") else cast(dict[str, Any], raw)
+        index_matches = response.get("matches", [])
+        matches.extend(index_matches)
+        logging.info(
+            "%s Retrieved %d maintenance building vectors from Pinecone index '%s'",
+            EMOJI_CHART, len(index_matches), idx_name)
+
     logging.info(
-        "%s Retrieved %d maintenance building vectors from Pinecone", EMOJI_CHART, len(matches))
+        "%s Retrieved %d maintenance building vectors from Pinecone (all target indexes)",
+        EMOJI_CHART, len(matches))
 
     # DIAGNOSTIC: Check if requested building exists in the data
     if building and matches:

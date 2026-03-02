@@ -25,7 +25,6 @@ class RiskItem(TypedDict):
 
     risk_item_id: Optional[str]
     canonical_building_name: str
-    fra_document_key: str
     fra_assessment_date: Optional[str]
     fra_assessment_date_int: Optional[int]
     issue_number: str
@@ -40,9 +39,7 @@ class RiskItem(TypedDict):
     completion_status: Optional[CompletionStatus]
     figure_references: list[str]
     page_references: list[int]
-    action_plan_page: int
     document_type: Optional[str]
-    namespace: Optional[str]
     ingestion_timestamp: Optional[str]
     is_current: Optional[bool]
     superseded_by: Optional[str]

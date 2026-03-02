@@ -41,6 +41,91 @@ FUZZY_WEAK = BUILDING_FUZZY_WEAK
 # --------------------------------------------------------------------------------------
 
 
+FILENAME_BUILDING_PATTERNS = [
+    # FM/RFM/SRL/FRA/UoB with optional FRA/OAS doc type + optional marker + date
+    re.compile(
+        r"""(?ix)
+        ^(?:FM|RFM|SRL|FRA|UoB)
+        [\-_ ]+
+        (?:FRA|OAS)?
+        [\-_ ]+
+        (.+?)
+        (?=
+            (?:[\-_ ]+(?:FRA|BMS|O&M|OM|MANUAL|CONTROLS)\b)?
+            [\-_ ]+
+            (?:\d{4}[\-_]\d{1,2}(?:[\-_]\d{1,2})?
+             |\d{1,2}[\-_]\d{4}
+             |\d{4})
+            \b
+          | $
+        )
+        """
+    ),
+    # UoB without dates; stop at doc-type markers
+    re.compile(
+        r"""(?ix)
+        ^(?:UoB)[\-_ ]+
+        (.+?)
+        (?=
+            [\-_ ]+(?:BMS|O&M|OM|MANUAL|CONTROLS)\b
+          | $
+        )
+        """
+    ),
+]
+
+STREET_SUFFIXES = (
+    "Road", "Rd",
+    "Street", "St",
+    "Lane", "Ln",
+    "Avenue", "Ave",
+    "Drive", "Dr",
+    "Close", "Court", "Way",
+    "Crescent", "Place", "Row",
+    "Terrace", "Parade", "Gardens", "Square"
+)
+
+STREET_PATTERN = re.compile(
+    rf"""(?ix)
+    ^
+    (\d+(?:-\d+)?[A-Za-z]?\s+
+     [A-Za-z0-9\s]+?
+     \b(?:{'|'.join(STREET_SUFFIXES)})\b
+    )
+    """
+)
+
+
+def _normalise_building_from_filename(raw: str) -> str:
+    raw = re.sub(r"\.[^.]+$", "", raw)
+    s = raw.replace("_", " ")
+    # Preserve numeric ranges like "8-10", but split other hyphens into spaces.
+    s = re.sub(r"(?<!\d)-|-(?!\d)", " ", s)
+    s = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", s)
+    s = re.sub(r"(?<=\d)(?=[A-Za-z])", " ", s)
+    s = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+
+    # Avoid truncating at "St" in "St Michaels ..."; treat as Saint.
+    if re.match(r"^\d+\s+St\s+Michaels?\b", s, flags=re.IGNORECASE):
+        return s
+
+    # Truncate to street address if present.
+    m = STREET_PATTERN.match(s)
+    if m:
+        return m.group(1).strip()
+
+    return s
+
+
+def _extract_building_with_fallback_patterns(name: str) -> Optional[str]:
+    for pat in FILENAME_BUILDING_PATTERNS:
+        match = pat.search(name)
+        if match:
+            return _normalise_building_from_filename(match.group(1))
+    return None
+
+
 def extract_building_from_filename(filename: str) -> Optional[str]:
     if not filename:
         return None
@@ -110,7 +195,8 @@ def extract_building_from_filename(filename: str) -> Optional[str]:
         building = re.sub(r'(\d+)([A-Z])', r'\1 \2', building)
         return re.sub(r'\s+', ' ', building).strip()
 
-    return None
+    # Fallback: broader filename patterns (more permissive).
+    return _extract_building_with_fallback_patterns(name)
 
 # --------------------------------------------------------------------------------------
 # Matching utilities

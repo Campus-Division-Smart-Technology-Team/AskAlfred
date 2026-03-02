@@ -1,10 +1,10 @@
-# 🦍 Alfred V2 — Modular, Hybrid-Intent Building-Aware Search Assistant
+# 🦍 Alfred V3 — Modular, Hybrid-Intent Building-Aware Search Assistant
 
-Alfred is an intelligent, Streamlit-based search assistant for the University of Bristol's Campus Innovation Technology team.
+Alfred is an intelligent, Streamlit-based search assistant for the University of Bristol's Campus Division.
 
 It provides **multi-domain, building-aware search** across:
 - Building Management Systems (BMS)
-- Fire Risk Assessments (FRAs)
+- Fire Risk Assessments and Fire Risk Action Items (FRAs)
 - Planon property data (conditions, areas, metadata)
 - Maintenance requests and job records  
 - General RAG / semantic search across documentation
@@ -16,17 +16,32 @@ Powered by:
 
 ---
 
-## 🧠 Intent Detection (New in V2)
+## 🧠 Features 
 
-Alfred V2 uses a **Hybrid Intent Routing System** with the `NLPIntentClassifier`:
+Alfred V3 is a modular, transactional, and concurrency-safe ingestion pipeline with:
+
+- Secure local file ingestion
+- FRA action plan parsing with structured extraction
+- Deterministic triage scoring & prioritisation
+- Atomic supersession handling for FRA updates
+- Vector storage via Pinecone
+- Embedding via OpenAI
+- Redis-backed job registry, locks & file registry
+- Thread-safe stats, cache & vector buffering
+- Dry-run mode for safe validation
+- Metrics instrumentation
+- Parallel IO + parsing workers
+- Batched and retry-aware upsert coordination
+
+Alfred V3 uses a **Hybrid Intent Routing System** with the `NLPIntentClassifier`:
 
 ### ✅ `intent_classifier.py` - NLPIntentClassifier
-A sophisticated, context-aware intent classifier using **Hugging Face's SentenceTransformers** (`all-MiniLM-L6-v2`) that:
+A sophisticated, context-aware intent classifier using a **quantized all-MiniLM-L6-v2 CT2 encoder** (`michaelfeil/ct2fast-all-MiniLM-L6-v2`) that:
 
 **Core Features:**
 - Loads pre-trained model from local `models/all-MiniLM-L6-v2/` directory or auto-downloads from Hugging Face
 - Auto-extracts zipped models at startup for convenience
-- Generates and caches intent embeddings for all query types (pickled for speed in `intent_embeddings_cache.pkl`)
+- Generates and caches intent embeddings for all query types (saved as JSON + NPZ in `intent_embeddings_cache.json` and `intent_embeddings_cache.npz`)
 - Returns calibrated confidence scores using **softmax normalisation**
 - Provides both semantic and pattern-based classification with automatic fallback
 
@@ -34,7 +49,7 @@ A sophisticated, context-aware intent classifier using **Hugging Face's Sentence
 - **Context-aware biasing**: Adjusts confidence scores based on `QueryContext` (detected buildings, business terms)
 - **Hybrid classification**: Combines semantic similarity (70% mean + 30% max example) with pattern matching
 - **Confidence threshold**: Default 0.65 threshold triggers pattern fallback for low-confidence predictions
-- **Graceful degradation**: Falls back to pattern-only mode if SentenceTransformers unavailable
+- **Graceful degradation**: Falls back to pattern-only mode if CT2 encoder unavailable
 
 **Intent Training Examples:**
 The classifier is trained on domain-specific examples across 6 query types:
@@ -86,14 +101,61 @@ Alfred's architecture follows a **modular, layered design**:
 ```
 
 ---
+## 🧠 Ingestion Architecture Overview
+
+Alfred's ingestion architecture is mainly determined by **document-type** and the upsert strategy:
+
+```
+            ┌────────────────────────┐
+            │     Local Files        │
+            └──────────┬─────────────┘
+                       │
+            ┌──────────▼─────────────┐
+            │ list_local_files_secure│
+            └──────────┬─────────────┘
+                       │
+            ┌──────────▼─────────────┐
+            │   Building Resolution  │
+            │(Property CSV + aliases)│
+            └──────────┬─────────────┘
+                       │
+            ┌──────────▼─────────────┐
+            │   DocumentProcessor    │
+            │  (extract + chunk +    │
+            │   FRA vector path)     │
+            └──────────┬─────────────┘
+                       │
+            ┌──────────▼─────────────┐
+            │ FileIngestOrchestrator │
+            │    (IO/parse pools)    │
+            └──────────┬─────────────┘
+                       │
+            ┌──────────▼─────────────┐
+            │ VectorWriteCoordinator │
+            │ (batch + flush policy) │
+            └──────────┬─────────────┘
+                       │
+            ┌──────────▼─────────────┐
+            │ Upsert:worker or inline│
+            └──────────┬─────────────┘
+                       │
+                       ▼
+            ┌────────────────────────┐
+            │     Pinecone Index     │
+            └────────────────────────┘
+```
+
+Files are processed by `DocumentProcessor`, which extracts text, chunks, and (for FRA candidates) routes through the FRA vector extraction path before returning vectors. `VectorWriteCoordinator` then batches and flushes vectors either **inline** (direct upsert in the main thread) or via **worker** threads (queue + `_upsert_worker`) depending on `upsert_strategy`, with both paths ultimately writing to Pinecone.
+
+---
 
 ## ⚙️ Key Components
 
 | Module | Purpose |
 |--------|----------|
 | **`main.py`** | Streamlit entry point. Initialises cache, handles UI, logging, and session state. |
-| **`intent_classifier.py`** | NLPIntentClassifier - Hugging Face SentenceTransformers model with context-aware biasing and calibrated confidence |
-| **`query_manager.py`** | Routes user input to the appropriate handler using a weighted priority system. Integrates NLPIntentClassifier for hybrid intent pipeline |
+| **`intent_classifier.py`** | NLPIntentClassifier - CT2 encoder (hf-hub-ctranslate2) with context-aware biasing and calibrated confidence |
+| **`query_manager.py`** | Routes user input to the appropriate handler using a priority-based system. Integrates NLPIntentClassifier for hybrid intent pipeline |
 | **`query_context.py`** | Encapsulates query metadata (buildings, business terms, complexity) used for context-aware classification |
 | **`query_types.py`** | Enum defining all supported query intents (CONVERSATIONAL, MAINTENANCE, RANKING, etc.) |
 | **`base_handler.py`** | Abstract base class for all query handlers with consistent logging and metadata extraction. |
@@ -106,13 +168,15 @@ Alfred's architecture follows a **modular, layered design**:
 | → `semantic_search_handler.py` | Fallback search handler for all remaining queries using Pinecone semantic vector retrieval + OpenAI summarisation. |
 | **`search_core` package** | Unified structured + semantic retrieval engine |
 | → `search_router.py` | Unified entry point for structured and semantic searches. |
-| → `search_instructions.py` | Defines `SearchInstructions` dataclass to pass structured search intent. |
+| **`search_instructions.py`** | Defines `SearchInstructions` dataclass to pass structured search intent (root-level module, used by search_core). |
+| **`search_core` package (cont.)** |  |
 | → `planon_search.py` | Handles property and Planon-related structured queries. |
 | → `maintenance_search.py` | Handles structured maintenance vector lookups. |
 | → `search_utils.py` | Core utilities for boosting, deduplication, and building filters. |
 | **`building/utils.py`** | Comprehensive building cache, alias, and fuzzy matching utilities (centralised). |
 | **`structured_queries.py`** | Rule-based structured detection for counting, ranking, maintenance, and property queries. |
-| **`config/config.py`** | Global environment, API keys, and Pinecone/OpenAI configuration. |
+| **`config/constant.py`** | Constants for environment, models, and routing configuration. |
+| **`config/settings.py`** | Environment, API keys, and Pinecone/OpenAI configuration. |
 
 ---
 
@@ -130,8 +194,8 @@ Example:
 ```text
 "Hi Alfred" → ConversationalHandler (priority: 1)
 "Which buildings have maintenance requests?" → MaintenanceHandler (priority: 2)
-"Which buildings are derelict?" → PropertyHandler (priority: 3)
-"Top 10 largest buildings" → RankingHandler (priority: 4)
+"Top 10 largest buildings" → RankingHandler (priority: 3)
+"Which buildings are derelict?" → PropertyHandler (priority: 4)
 "How many buildings have FRAs?" → CountingHandler (priority: 5)
 "Describe frost protection in Berkeley Square" → SemanticSearchHandler (priority: 99)
 ```
@@ -183,7 +247,7 @@ Building cache initialisation runs at app startup, ensuring that all fuzzy and a
 
 ## 🚀 Features Summary
 
-- **NLP Intent Classification**: Hugging Face SentenceTransformers with context-aware biasing
+- **NLP Intent Classification**: CT2 encoder (hf-hub-ctranslate2) with context-aware biasing
 - **Modular Handlers**: Each query type handled by a specialised module  
 - **Unified Router**: `search_core` dispatches structured vs. semantic searches
 - **Session Manager**: `session_manager` Persists building context for previous user query  
@@ -202,7 +266,7 @@ Recent ingestion changes focus on reliability, idempotency, and observability:
 - **Interfaces layer** for ingestion ports (`VectorStore`, `Embedder`, `EventSink`, `IngestFileRegistry`, `JobRegistry`).
 - **Redis-backed registries** for files and jobs, with status/TTL handling and atomic lease semantics.
 - **File state machine** with explicit states: discovered → processing → upserted → verified → success/failed.
-- **Tokenized processing**: each file run gets a `processing_token` enforced in registry state transitions.
+- **Tokenised processing**: each file run gets a `processing_token` enforced in registry state transitions.
 - **VectorStore abstraction** wraps Pinecone calls and normalises error handling.
 - **Embedder wrapper** owns retries/backoff/batch splitting and returns explicit index → embedding/error mappings.
 - **Unified upsert scheduling** via `VectorWriteCoordinator` (inline or worker strategy).
@@ -260,8 +324,8 @@ openai>=1.0.0
 pinecone>=3.0.0
 
 # NLP + ML
-sentence-transformers==2.7.0  # Hugging Face transformers for intent classification
-torch>=2.1.0                  # PyTorch backend for SentenceTransformers
+hf-hub-ctranslate2>=2.0.0     # CT2 encoder for intent classification
+torch>=2.1.0                  # PyTorch backend for CT2 encoder
 textblob==0.19.0             # Spell checking
 numpy>=1.24                  # Vector operations
 scikit-learn>=1.4.0          # Additional ML utilities
@@ -271,12 +335,12 @@ scikit-learn>=1.4.0          # Additional ML utilities
 
 The NLPIntentClassifier expects:
 - **Local model**: `models/all-MiniLM-L6-v2/` (auto-extracted from .zip if present)
-- **Cache**: `intent_embeddings_cache.pkl` (auto-generated on first run)
+- **Cache**: `intent_embeddings_cache.json` and `intent_embeddings_cache.npz` (auto-generated on first run)
 - **Fallback**: Auto-downloads from Hugging Face if local model not found
 
 ### Generated files
 
-- intent_embeddings_cache.pkl is generated at runtime and should not be committed
+- intent_embeddings_cache.json and intent_embeddings_cache.npz are generated at runtime and should not be committed
 
 ### Logging
 
@@ -293,8 +357,8 @@ The NLPIntentClassifier expects:
 | "Hi Alfred" | CONVERSATIONAL | ConversationalHandler |
 | "Which buildings have FRAs?" | COUNTING | CountingHandler |
 | "Show maintenance for Senate House" | MAINTENANCE | MaintenanceHandler |
-| "Which buildings are derelict?" | PROPERTY_CONDITION | PropertyHandler |
 | "Top 5 largest buildings by area" | RANKING | RankingHandler |
+| "Which buildings are derelict?" | PROPERTY_CONDITION | PropertyHandler |
 | "Show the AHU logic in Senate House" | SEMANTIC_SEARCH | SemanticSearchHandler |
 
 ---
@@ -314,5 +378,3 @@ The NLPIntentClassifier expects:
 
 Internal use only — University of Bristol Smart Technology Team  
 © 2025 University of Bristol
-
-

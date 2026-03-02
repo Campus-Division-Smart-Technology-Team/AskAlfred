@@ -5,7 +5,11 @@ UI components and styling for the AskAlfred Streamlit app.
 Enhanced with building cache status display.
 """
 
+import os
+from datetime import datetime, timezone
 import streamlit as st
+import requests
+from clients import get_redis
 from config import (
     TARGET_INDEXES,
     SEARCH_ALL_NAMESPACES,
@@ -15,6 +19,7 @@ from config import (
     UI_TOP_K_MAX,
     UI_TOP_K_DEFAULT,
     UI_SNIPPET_MAX_CHARS,
+    ENABLE_SERVICE_STATUS,
 )
 from building import get_building_names_from_cache, get_cache_status
 
@@ -156,7 +161,7 @@ def render_tabs():
                 **Building abbreviations:**
                 - Where is DHB?
                 - Tell me about BDFI
-                - What are the maintenance requests at DEFRA?
+                - What are the maintenance jobs at DEFRA?
 
                 """
             )
@@ -232,7 +237,10 @@ def render_sidebar():
         )
         st.session_state.generate_llm_answer = generate_llm_answer
 
-        st.markdown("---")
+        if ENABLE_SERVICE_STATUS:
+            st.markdown("---")
+            render_service_status()
+            st.markdown("---")
         st.info(f"**Minimum Score Threshold:** {MIN_SCORE_THRESHOLD}")
         st.markdown("---")
         if st.button("Clear Chat History"):
@@ -262,6 +270,136 @@ def render_sidebar():
         """, unsafe_allow_html=True)
 
     return top_k
+
+
+@st.cache_data(ttl=60)
+def fetch_statuspage_status(url: str) -> dict[str, str]:
+    """Fetch status data from a Statuspage status.json endpoint."""
+    response = requests.get(url, timeout=8)
+    response.raise_for_status()
+    data = response.json()
+    status = data.get("status", {})
+    return {
+        "indicator": str(status.get("indicator", "unknown")),
+        "description": str(status.get("description", "Unknown")),
+    }
+
+
+def get_redis_status() -> tuple[str, str]:
+    """Return (status_text, severity) for Redis availability."""
+    if not os.getenv("REDIS_HOST") or not os.getenv("REDIS_PORT"):
+        return "Not configured", "info"
+    try:
+        redis_client = get_redis()
+        if redis_client.ping():
+            return "Operational", "ok"
+        return "No response", "warning"
+    except Exception as exc:  # pylint: disable=broad-except
+        return f"Unavailable: {exc}", "error"
+
+
+def render_status_line(label: str, status_text: str, severity: str):
+    """Render a single status line with consistent styling."""
+    if severity == "ok":
+        st.success(f"{label}: {status_text}")
+    elif severity == "warning":
+        st.warning(f"{label}: {status_text}")
+    elif severity == "error":
+        st.error(f"{label}: {status_text}")
+    else:
+        st.info(f"{label}: {status_text}")
+
+
+def render_service_status():
+    """Render external service availability widget in the sidebar."""
+    st.subheader("Service Status")
+
+    if st.button("Refresh Service Status"):
+        fetch_statuspage_status.clear()
+        st.session_state.pop("service_status_snapshot", None)
+
+    status_endpoints = {
+        "OpenAI": "https://status.openai.com/api/v2/status.json",
+        "Pinecone": "https://status.pinecone.io/api/v2/status.json",
+    }
+
+    now_dt = datetime.now(timezone.utc)
+    now_label = now_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    snapshot: dict[str, tuple[str, str]] = {}
+
+    for name, url in status_endpoints.items():
+        try:
+            status = fetch_statuspage_status(url)
+            indicator = status.get("indicator", "unknown")
+            description = status.get("description", "Unknown")
+            if indicator == "none" or description.lower() == "operational":
+                render_status_line(name, description, "ok")
+                snapshot[name] = (description, "ok")
+            elif indicator in {"minor", "major"}:
+                render_status_line(name, description, "warning")
+                snapshot[name] = (description, "warning")
+            elif indicator == "critical":
+                render_status_line(name, description, "error")
+                snapshot[name] = (description, "error")
+            else:
+                render_status_line(name, description, "info")
+                snapshot[name] = (description, "info")
+        except Exception as exc:  # pylint: disable=broad-except
+            render_status_line(name, f"Unknown: {exc}", "info")
+            snapshot[name] = (f"Unknown: {exc}", "info")
+
+    redis_status, redis_severity = get_redis_status()
+    render_status_line("Redis", redis_status, redis_severity)
+    snapshot["Redis"] = (redis_status, redis_severity)
+
+    st.caption(f"Last updated: {now_label}")
+
+    if "service_status_history" not in st.session_state:
+        st.session_state.service_status_history = []
+
+    current_snapshot = {"time_label": now_label, "statuses": snapshot}
+    last_snapshot = st.session_state.get("service_status_snapshot")
+    if last_snapshot != current_snapshot:
+        st.session_state.service_status_history.insert(0, current_snapshot)
+        st.session_state.service_status_history = st.session_state.service_status_history[:3]
+        st.session_state.service_status_snapshot = current_snapshot
+
+    with st.expander("Status History"):
+        history = st.session_state.service_status_history
+        if not history:
+            st.caption("No history yet.")
+        service_order = ["OpenAI", "Pinecone", "Redis"]
+        for item in history:
+            item_label = item.get("time_label", "Unknown time")
+            st.markdown(f"**{item_label}**")
+            cols = st.columns(len(service_order))
+            for idx, svc in enumerate(service_order):
+                text, sev = item["statuses"].get(svc, ("", "info"))
+                if sev == "ok":
+                    color = "#28a745"
+                    bg = "rgba(40, 167, 69, 0.15)"
+                elif sev == "warning":
+                    color = "#ffc107"
+                    bg = "rgba(255, 193, 7, 0.15)"
+                elif sev == "error":
+                    color = "#dc3545"
+                    bg = "rgba(220, 53, 69, 0.15)"
+                else:
+                    color = "#6c757d"
+                    bg = "rgba(108, 117, 125, 0.15)"
+
+                with cols[idx]:
+                    st.markdown(
+                        f"""
+                        <div style="border:1px solid {color}; color:{color};
+                                    background:{bg}; padding:6px 8px;
+                                    border-radius:8px; text-align:center;
+                                    font-weight:600; font-size:0.85rem;">
+                            {svc}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
 
 def display_search_results(results):

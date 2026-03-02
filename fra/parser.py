@@ -77,7 +77,7 @@ class FRAActionPlanParser(_SectionParserMixin, _TableParserMixin, _RowParserMixi
                 "Could not extract assessment date from %s", item_key)
 
         # 2. Locate action plan section
-        action_plan_text, start_page = self._extract_action_plan_section(
+        action_plan_text, _ = self._extract_action_plan_section(
             item_text, page_texts
         )
 
@@ -108,10 +108,8 @@ class FRAActionPlanParser(_SectionParserMixin, _TableParserMixin, _RowParserMixi
                 issue_num=row['issue_num'],
                 risk_level=row['risk_level'],
                 row_data=row_data,
-                item_key=item_key,
                 canonical_building=canonical_building,
                 assessment_date=assessment_date,
-                page_num=start_page
             )
             risk_items.append(risk_item)
 
@@ -147,10 +145,8 @@ class FRAActionPlanParser(_SectionParserMixin, _TableParserMixin, _RowParserMixi
         issue_num: str,
         risk_level: str,
         row_data: ParsedRowData,
-        item_key: str,
         canonical_building: str,
         assessment_date: Optional[str],
-        page_num: int
     ) -> RiskItem:
         """Convert parsed row data into structured risk item record."""
 
@@ -172,7 +168,6 @@ class FRAActionPlanParser(_SectionParserMixin, _TableParserMixin, _RowParserMixi
         risk_item_id = None
         ingestion_timestamp = None
         document_type = None
-        namespace = None
         is_current = None
         superseded_by = None
 
@@ -181,7 +176,6 @@ class FRAActionPlanParser(_SectionParserMixin, _TableParserMixin, _RowParserMixi
             "risk_item_id": risk_item_id,
             "partition_key": f"{canonical_building}#{issue_num}",
             "canonical_building_name": canonical_building,
-            "fra_document_key": item_key,
             "fra_assessment_date": assessment_date,
             "fra_assessment_date_int": assessment_date_int,
             "issue_number": issue_num,
@@ -204,11 +198,9 @@ class FRAActionPlanParser(_SectionParserMixin, _TableParserMixin, _RowParserMixi
             # Evidence
             "figure_references": row_data["figure_references"],
             "page_references": [],  # Populated by _link_evidence
-            "action_plan_page": page_num,
 
             # Metadata
             "document_type": document_type,
-            "namespace": namespace,
             "ingestion_timestamp": ingestion_timestamp,
 
             # Triage flags (computed later)

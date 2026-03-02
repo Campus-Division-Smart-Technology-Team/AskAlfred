@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     
     steps:
       - uses: actions/checkout@v4
@@ -38,26 +38,23 @@ jobs:
       
       - name: Run Safety check
         id: safety
-        continue-on-error: true
         run: |
           echo "## 🔒 Safety Vulnerability Check" >> $GITHUB_STEP_SUMMARY
-          safety check --json > safety-report.json || true
-          safety check >> $GITHUB_STEP_SUMMARY || echo "⚠️ Vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
+          safety check --json > safety-report.json
+          safety check >> $GITHUB_STEP_SUMMARY
       
       - name: Run pip-audit
         id: pip-audit
-        continue-on-error: true
         run: |
           echo "## 📦 Pip-Audit Check" >> $GITHUB_STEP_SUMMARY
-          pip-audit --desc >> $GITHUB_STEP_SUMMARY || echo "⚠️ Vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
+          pip-audit --desc >> $GITHUB_STEP_SUMMARY
       
       - name: Run Bandit security check
         id: bandit
-        continue-on-error: true
         run: |
           echo "## 🔐 Bandit Code Security Check" >> $GITHUB_STEP_SUMMARY
-          bandit -r . -ll -f json -o bandit-report.json || true
-          bandit -r . -ll >> $GITHUB_STEP_SUMMARY || echo "⚠️ Issues detected" >> $GITHUB_STEP_SUMMARY
+          bandit -r . -ll -f json -o bandit-report.json
+          bandit -r . -ll >> $GITHUB_STEP_SUMMARY
       
       - name: Check requirements.txt pinning
         id: pinning
@@ -67,6 +64,7 @@ jobs:
       
       - name: Upload security reports
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: security-reports-${{ matrix.python-version }}
@@ -95,12 +93,6 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
-      
-      - name: Fail if vulnerabilities found (strict mode)
-        if: failure()
-        run: |
-          echo "🚨 Security vulnerabilities detected!"
-          exit 1
 
   dependency-update-check:
     runs-on: ubuntu-latest

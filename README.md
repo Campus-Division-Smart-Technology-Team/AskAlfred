@@ -374,7 +374,475 @@ The NLPIntentClassifier expects:
 
 ---
 
+## 🔒 Security Features
+
+Alfred implements defence-in-depth security across multiple layers:
+
+### Input Validation (`input_validator.py`)
+
+Comprehensive query validation with:
+- **Prompt injection detection**: Blocks attempts to manipulate AI behaviour via malicious inputs
+- **DoS protection**: Query length limits and complexity analysis
+- **SQL/NoSQL injection patterns**: Detects common injection vectors
+- **Unicode normalisation**: Prevents homoglyph attacks
+- **Whitelist validation**: Ensures queries contain only permitted characters
+
+```python
+from input_validator import validate_query_security, get_validation_summary
+
+result = validate_query_security(user_query)
+if not result.is_valid:
+    logger.warning(f"Blocked query: {result.rejection_reason}")
+```
+
+### File Operations Security (`file_operations_validator.py`)
+
+OWASP-compliant file handling with:
+- **Path traversal prevention**: Blocks `../` and absolute path escapes
+- **Symlink protection**: Detects and blocks symbolic link attacks
+- **File type whitelisting**: Only permits known-safe extensions (`.pdf`, `.docx`, `.xlsx`, etc.)
+- **Size limits**: Configurable maximum file sizes
+- **Filename sanitisation**: Removes dangerous characters and sequences
+
+```python
+from file_operations_validator import (
+    validate_path_safety,
+    is_safe_extension,
+    read_file_safe,
+    validate_file_safety
+)
+
+# Validate path safety
+safe_path = validate_path_safety(base_directory, user_provided_path)
+
+# Check file extension
+if is_safe_extension(filename):
+    content = read_file_safe(base_directory, relative_path)
+```
+
+### Rate Limiting (`rate_limiter.py`)
+
+Redis-backed rate limiting with:
+- **Per-user query limits**: Prevents abuse from individual sessions
+- **Global rate caps**: Protects against coordinated attacks
+- **Sliding window algorithm**: Fair burst handling
+- **Configurable thresholds**: Separate limits for queries vs file operations
+
+### Credential Management (`credential_manager.py`)
+
+Secure credential handling:
+- **Environment variable isolation**: No hardcoded secrets
+- **Lazy loading**: Credentials fetched only when needed
+- **Validation on access**: Ensures credentials meet format requirements
+
+### Log Sanitisation (`log_sanitiser.py`)
+
+Prevents sensitive data leakage:
+- **PII redaction**: Removes email addresses, phone numbers
+- **Credential masking**: Hides API keys and tokens in logs
+- **Path normalisation**: Removes user-specific path components
+
+---
+
+## 🔥 FRA (Fire Risk Assessment) Module
+
+The `fra/` package provides structured extraction and prioritisation for Fire Risk Assessments:
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `FRAActionPlanParser` | Extracts risk items from FRA PDF documents using regex and structure analysis |
+| `FRATriageComputer` | Calculates deterministic priority scores based on risk level, timescale, and category |
+| `FRAEnricher` | Enriches extracted items with computed fields (scores, flags, normalised values) |
+| `ParsingConfidence` | Tracks extraction reliability per-field and per-document |
+| `FRASupersessionHandler` | Manages version control when newer FRAs replace older ones |
+
+### Triage Scoring Algorithm
+
+```python
+# Priority score calculation (lower = more urgent)
+base_score = RISK_WEIGHTS[risk_level]  # Intolerable=1, Substantial=2, Moderate=3, Tolerable=4
+time_modifier = TIMESCALE_WEIGHTS[timescale]  # Immediate=0, 3months=1, 6months=2, 12months=3
+category_modifier = CATEGORY_WEIGHTS[category]  # Life safety=0, Compliance=1, Advisory=2
+
+final_score = base_score + (time_modifier * 0.3) + (category_modifier * 0.2)
+```
+
+### FRA Vector Structure
+
+Each FRA risk item generates a vector with metadata:
+```python
+{
+    "id": "fra_{building}_{item_number}_{hash}",
+    "values": [...],  # 1536-dim embedding
+    "metadata": {
+        "document_type": "fra_action_item",
+        "building": "Senate House",
+        "risk_level": "Substantial",
+        "timescale": "3 months",
+        "category": "Fire doors",
+        "priority_score": 2.5,
+        "action_required": "Replace fire door seals...",
+        "location_detail": "Level 2, Room 2.15",
+        "fra_date": "2024-01-15",
+        "superseded": false
+    }
+}
+```
+
+---
+
+## 🛠️ Utility Modules
+
+### Session Management (`session_manager.py`)
+
+Persists conversation context across queries:
+- **Building context carry-over**: "Tell me more" queries inherit previous building
+- **Query history tracking**: Maintains recent query list for context
+- **State serialisation**: Streamlit session state management
+
+### Date Utilities (`date_utils.py`)
+
+Intelligent date parsing for document searches:
+- **Natural language dates**: "last month", "Q3 2024", "before January"
+- **Publication date filtering**: Find documents by date range
+- **ISO normalisation**: Consistent date format handling
+
+### Business Terms (`business_terms.py`)
+
+Domain-specific terminology definitions:
+```python
+BUSINESS_TERMS = {
+    "hvac": ["heating", "ventilation", "air conditioning", "ahu", "fcu"],
+    "bms": ["building management", "controls", "trend", "bacnet"],
+    "fra": ["fire risk", "assessment", "action plan", "risk item"],
+    "ppm": ["planned preventive maintenance", "scheduled maintenance"],
+    ...
+}
+```
+
+### Context Sanitisation (`sanitise_context.py`)
+
+Safe rendering for UI output:
+- **Markdown escaping**: Prevents injection via search results
+- **HTML sanitisation**: Removes potentially dangerous tags
+- **Length truncation**: Prevents UI overflow
+
+### Client Management (`clients.py`)
+
+Centralised API client initialisation:
+```python
+from clients import  ClientManager, get_oai
+
+openai = get_oai()                    # OpenAI client with configured timeouts
+redis = ClientManager.get_redis()     # Redis client with connection pooling
+
+```
+
+---
+
+## 🧪 Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run with coverage
+pytest tests/ --cov=. --cov-report=html
+
+# Run specific test module
+pytest tests/test_fra_triage.py -v
+
+# Run security tests only
+pytest tests/test_file_operations_validator.py tests/test_input_validator.py -v
+```
+
+### Test Structure
+
+```
+tests/
+├── conftest.py                      # Shared fixtures (mock clients, test data)
+├── test_file_operations_validator.py # File security validation tests
+├── test_fra_triage.py               # FRA triage scoring tests
+├── test_intent_classifier.py        # Intent classification tests
+├── test_building_utils.py           # Building cache and matching tests
+├── test_input_validator.py          # Query validation tests
+└── test_search_core.py              # Search router tests
+```
+
+### Key Fixtures
+
+```python
+@pytest.fixture
+def mock_pinecone_index():
+    """Returns a mock Pinecone index for testing searches."""
+    ...
+
+@pytest.fixture
+def sample_fra_document():
+    """Returns a sample FRA PDF content for parsing tests."""
+    ...
+
+@pytest.fixture
+def building_cache():
+    """Pre-populated building cache for matching tests."""
+    ...
+```
+
+---
+
+## 🔐 Security Scanning
+
+### Automated Security Checks
+
+```bash
+# Run full security scan
+python scripts/security_scan.py --json --strict
+
+# Individual tools
+safety check -r requirements.txt
+pip-audit
+bandit -r . -ll
+```
+
+### CI/CD Integration
+
+The `.github/workflows/security-scan.yml` workflow runs on every PR:
+
+1. **Dependency scanning**: `safety` and `pip-audit` check for known vulnerabilities
+2. **Static analysis**: `bandit` scans for common security issues
+3. **Secret detection**: Checks for accidentally committed credentials
+4. **Requirements pinning**: Validates all dependencies are version-pinned
+
+### Security Scan Output
+
+```json
+{
+    "scan_date": "2025-03-04T10:30:00Z",
+    "vulnerabilities_found": 0,
+    "warnings": [],
+    "checks_passed": ["safety", "pip-audit", "bandit", "pin-check"],
+    "recommendations": []
+}
+```
+
+---
+
+## 🛠️ Tools Directory
+
+Development and debugging utilities in `tools/`:
+
+| Tool | Purpose | Usage |
+|------|---------|-------|
+| `extract_pdf_text.py` | Extract raw text from PDF files | `python tools/extract_pdf_text.py input.pdf` |
+| `parse_goldneyhall_action_plan_from_full_text.py` | Test FRA parsing on sample document | `python tools/parse_goldneyhall_action_plan_from_full_text.py` |
+| `profile_intent.py` | Profile intent classifier performance | `python tools/profile_intent.py --queries 1000` |
+
+### PDF Text Extraction
+
+```bash
+# Extract text for debugging
+python tools/extract_pdf_text.py "path/to/document.pdf" --output extracted.txt
+
+# Extract with page markers
+python tools/extract_pdf_text.py "path/to/document.pdf" --page-markers
+```
+
+### Intent Profiling
+
+```bash
+# Profile classification speed
+python tools/profile_intent.py --queries 1000 --warmup 100
+
+# Output:
+# Average latency: 2.3ms
+# P95 latency: 4.1ms
+# Throughput: 435 queries/sec
+```
+
+---
+
+## ⚙️ Additional Environment Variables
+
+Beyond the core variables, these optional settings provide fine-grained control:
+
+```bash
+# Environment mode
+ENVIRONMENT=development          # development | staging | production
+IS_PRODUCTION=false             # Enables stricter validation in production
+
+# Feature flags
+ENABLE_SERVICE_STATUS=true      # Show service health in UI
+ENABLE_RATE_LIMITING=true       # Enable query rate limits
+ENABLE_INPUT_VALIDATION=true    # Enable prompt injection detection
+
+# Security settings
+MAX_QUERY_LENGTH=2000           # Maximum characters per query
+MAX_FILE_SIZE_MB=50             # Maximum upload file size
+ALLOWED_FILE_EXTENSIONS=.pdf,.docx,.xlsx,.csv
+
+# Redis settings (optional - falls back to in-memory if unavailable)
+REDIS_DB=0                      # Redis database number
+REDIS_SSL=false                 # Enable SSL for Redis connection
+REDIS_MAX_CONNECTIONS=10        # Connection pool size
+
+# Pinecone settings
+PINECONE_ENVIRONMENT=us-east-1  # Pinecone region
+PINECONE_INDEX_NAME=alfred-v3   # Index name
+PINECONE_NAMESPACE=production   # Namespace for vectors
+
+# Logging
+LOG_FORMAT=json                 # json | text
+LOG_FILE=/var/log/alfred.log    # Optional file logging
+SENSITIVE_LOG_FIELDS=api_key,password,token  # Fields to redact
+```
+
+---
+
+## 📊 Metrics & Observability
+
+### Prometheus Metrics
+
+Alfred exposes Prometheus-compatible metrics:
+
+```python
+# Ingestion metrics
+alfred_embedding_retries_total          # Count of embedding API retries
+alfred_embedding_batch_reductions_total # Count of batch size reductions
+alfred_rate_limit_hits_total            # OpenAI rate limit encounters
+alfred_upsert_duration_seconds          # Histogram of upsert latencies
+alfred_lock_contention_total            # Redis lock contention events
+alfred_rollback_failures_total          # Failed rollback attempts
+
+# FRA-specific metrics
+alfred_fra_supersession_bulk_success    # Successful bulk supersession updates
+alfred_fra_supersession_bulk_failure    # Failed bulk supersession updates
+alfred_fra_supersession_item_success    # Individual item update successes
+alfred_fra_supersession_item_failure    # Individual item update failures
+
+# Query metrics
+alfred_query_latency_seconds            # End-to-end query latency
+alfred_intent_classification_seconds    # Intent classifier latency
+alfred_handler_invocations_total        # Count by handler type
+```
+
+### Event Sink (JSONL)
+
+Structured events for audit and debugging:
+
+```json
+{"event": "ingestion_complete", "timestamp": "2025-03-04T10:30:00Z", "files_processed": 150, "vectors_upserted": 4523, "errors": 2}
+{"event": "verification_alert", "timestamp": "2025-03-04T10:31:00Z", "file": "fra_senate_house.pdf", "expected_vectors": 45, "found_vectors": 43}
+{"event": "fra_supersession", "timestamp": "2025-03-04T10:32:00Z", "building": "Senate House", "old_fra_date": "2023-01-15", "new_fra_date": "2024-01-15", "items_superseded": 38}
+```
+
+---
+
+## 🗂️ Project Structure
+
+```
+Alfred-V3/
+├── main.py                     # Streamlit entry point
+├── intent_classifier.py        # NLP intent classification
+├── query_manager.py            # Query routing orchestrator
+├── query_context.py            # Query metadata container
+├── query_types.py              # Intent enum definitions
+├── search_instructions.py      # Search request dataclass
+├── structured_queries.py       # Rule-based query detection
+│
+├── # Security modules (root level)
+├── input_validator.py          # Query validation & injection detection
+├── file_operations_validator.py # Path traversal & file safety
+├── rate_limiter.py             # Redis-backed rate limiting
+├── log_sanitiser.py            # PII redaction in logs
+├── credential_manager.py       # Secure credential handling
+│
+├── # Additional utilities (root level)
+├── alfred_exceptions.py        # Custom exception classes
+├── pinecone_utils.py           # Pinecone helper functions
+├── sanitise_context.py         # Context sanitisation for UI
+├── session_manager.py          # Streamlit session management
+├── clients.py                  # API client management
+├── emojis.py                   # Emoji constants
+├── word_to_pdf.py              # Document conversion utility
+├── date_utils.py               # Date parsing utilities
+├── business_terms.py           # Domain terminology
+├── analyse_events_jsonl.py     # Event log analysis
+│
+├── query_handlers/             # Handler implementations
+│   ├── __init__.py
+│   ├── base_handler.py
+│   ├── conversational_handler.py
+│   ├── counting_handler.py
+│   ├── maintenance_handler.py
+│   ├── property_handler.py
+│   ├── ranking_handler.py
+│   └── semantic_search_handler.py
+│
+├── search_core/                # Search engine layer
+│   ├── __init__.py
+│   ├── search_router.py
+│   ├── planon_search.py
+│   ├── maintenance_search.py
+│   └── search_utils.py
+│
+├── building/                   # Building data management
+│   ├── __init__.py
+│   ├── utils.py
+│   ├── path_inventory.py
+│   ├── path_inventory_summary.py
+│   └── alias_override.py
+│
+├── fra/                        # FRA processing
+│   ├── __init__.py
+│   ├── parser.py
+│   ├── triage.py
+│   ├── enricher.py
+│   └── supersession.py
+│
+├── ingest/                     # Ingestion pipeline
+│   ├── __init__.py
+│   ├── interfaces.py
+│   ├── orchestrator.py
+│   ├── coordinator.py
+│   ├── document_processor.py
+│   └── registries.py
+│
+├── interfaces/                 # Abstract interfaces
+│   └── __init__.py             # VectorStore, Embedder, EventSink, etc.
+│
+├── config/                     # Configuration
+│   ├── __init__.py
+│   ├── constant.py
+│   └── settings.py
+│
+├── tests/                      # Test suite
+│   ├── conftest.py
+│   └── test_*.py
+│
+├── tools/                      # Development utilities
+│   ├── extract_pdf_text.py
+│   ├── profile_intent.py
+│   └── parse_goldneyhall_action_plan_from_full_text.py
+│
+├── scripts/                    # Operational scripts
+│   └── security_scan.py
+│
+├── models/                     # ML model files
+│   └── all-MiniLM-L6-v2/
+│
+├── .github/
+│   └── workflows/
+│       └── security-scan.yml
+│
+├── requirements.txt
+├── README.md
+└── .gitignore
+```
 ## 📝 License
 
-Internal use only — University of Bristol Smart Technology Team  
+Internal use only — University of Bristol Smart Buildings Team  
 © 2025 University of Bristol

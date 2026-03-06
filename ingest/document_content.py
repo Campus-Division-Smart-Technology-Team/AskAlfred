@@ -13,7 +13,11 @@ import json
 import logging
 import random
 import re
+import shutil
+import subprocess
+import tempfile
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -24,6 +28,10 @@ try:
     from pdfminer.high_level import extract_text as pdfminer_extract_text
 except Exception:  # pylint: disable=broad-except
     pdfminer_extract_text = None
+try:
+    import textract  # type: ignore[import-untyped]
+except Exception:  # pylint: disable=broad-except
+    textract = None
 from building import normalise_building_name
 from alfred_exceptions import ParseError, ValidationError
 from interfaces import EmbeddingsResult
@@ -209,6 +217,59 @@ def extract_text(
             log.warning("DOCX extract failed for %s: %s", key, ex)
             return ""
 
+    if extension == "doc":
+        return _extract_doc_text(key, data, log)
+
+    return ""
+
+
+def _extract_doc_text(key: str, data: bytes, log: logging.Logger) -> str:
+    if not data:
+        return ""
+
+    if textract is not None:
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".doc", delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            text_bytes = textract.process(tmp_path)
+            return text_bytes.decode("utf-8", errors="ignore") if text_bytes else ""
+        except Exception as ex:  # pylint: disable=broad-except
+            log.warning("DOC extract (textract) failed for %s: %s", key, ex)
+        finally:
+            if tmp_path:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    antiword_path = shutil.which("antiword")
+    if antiword_path:
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".doc", delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            res = subprocess.run(
+                [antiword_path, tmp_path],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res.returncode == 0:
+                return res.stdout or ""
+            log.warning("DOC extract (antiword) failed for %s: %s", key, res.stderr)
+        except Exception as ex:  # pylint: disable=broad-except
+            log.warning("DOC extract (antiword) failed for %s: %s", key, ex)
+        finally:
+            if tmp_path:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    log.warning("No DOC extractor available for %s", key)
     return ""
 
 

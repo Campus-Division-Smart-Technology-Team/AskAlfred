@@ -128,7 +128,7 @@ def run_safety_scan(json_format: bool = False) -> dict[str, Any]:
     if json_format:
         cmd.extend(["--output", "json"])
     else:
-        cmd.append("--detailed-output")
+        cmd.append("--full-report")
 
     returncode, stdout, stderr = run_command(cmd)
 

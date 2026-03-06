@@ -104,6 +104,9 @@ def semantic_search(
             ), "", True
 
     # ===== Answer generation =====
+    if not top_hits:
+        return [], "I couldn't find any matching documents.", "", True
+
     answer, pub_info = "", ""
     building_groups = group_results_by_building(top_hits)
 

@@ -302,7 +302,8 @@ class TestEnvironmentVariableHandling:
                 {'MULTILINE': 'Multiline'})
             assert provider.get_credential('MULTILINE') == cred_with_newline
 
-    @pytest.mark.skipif(sys.platform == 'win32', reason="Environment variables are case-insensitive on Windows")
+    @pytest.mark.skipif(sys.platform == 'win32',
+                        reason="Environment variables are case-insensitive on Windows")
     def test_credential_key_case_sensitive(self):
         """Test that credential keys are case-sensitive (Unix/Linux only)."""
         with patch.dict(os.environ, {'API_KEY': 'value1'}):

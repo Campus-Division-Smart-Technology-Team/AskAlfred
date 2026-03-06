@@ -38,7 +38,11 @@ def list_namespaces_for_index(idx) -> list[Optional[str]]:
     """
     try:
         stats = idx.describe_index_stats()
-        ns_dict = (stats or {}).get("namespaces") or {}
+        # Pinecone clients may return dict-like or object-like stats.
+        if hasattr(stats, "namespaces"):
+            ns_dict = stats.namespaces or {}
+        else:
+            ns_dict = (stats or {}).get("namespaces") or {}
 
         # Get namespace names, converting empty strings to None
         names = []
@@ -229,7 +233,11 @@ def desanitise_metadata_from_pinecone(metadata: dict[str, Any]) -> dict[str, Any
 
 def normalise_matches(raw: Any) -> list[dict[str, Any]]:
     """Normalise Pinecone results from either `matches` or `result.hits` shapes."""
-    data = _as_dict(raw)
+    # Handle response objects that expose matches directly.
+    if hasattr(raw, "matches") and isinstance(raw.matches, list):
+        data = {"matches": raw.matches}
+    else:
+        data = _as_dict(raw)
 
     if isinstance(data, dict) and isinstance(data.get("matches"), list):
         out: list[dict[str, Any]] = []

@@ -2,6 +2,7 @@
 .env
 *.env
 .env.*
+.venv
 
 # keys
 config/secrets/*
@@ -14,7 +15,9 @@ __pycache__/
 .cache/
 *.pkl
 *.bin
+
 *.json
+!.safety-policy.json
 *.pklz
 *.jsonl
 *.out

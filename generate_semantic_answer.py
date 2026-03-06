@@ -27,7 +27,7 @@ from date_utils import (
     format_display_date,
     PLANON_DATE_PATTERNS,
 )
-from emojis import EMOJI_DOCUMENT, EMOJI_BUILDING, EMOJI_CALENDAR, EMOJI_CHART
+from emojis import EMOJI_DOCUMENT, EMOJI_BUILDING, EMOJI_CHART
 from pinecone_utils import open_index
 
 
@@ -300,7 +300,7 @@ def format_date_information(
     if not date_context_parts:
         date_context_parts.append("Date Information: Not available")
         publication_parts.append(
-            f"{EMOJI_CALENDAR} **Publication date unknown**")
+            "**Publication date unknown**")
 
     date_context = "\n".join(date_context_parts)
     publication_info = "\n".join(publication_parts)

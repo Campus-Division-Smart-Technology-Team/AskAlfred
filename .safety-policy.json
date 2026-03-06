@@ -1,0 +1,33 @@
+{
+    "version": "3.0",
+    "report": {
+        "dependency-vulnerabilities": {
+            "enabled": true,
+            "auto-ignore-in-report": {
+                "python": {
+                    "environment-results": true,
+                    "unpinned-requirements": false
+                },
+                "vulnerabilities": {
+                    "70630": {
+                        "reason": "aiohttp 4.0.0a vulnerability - we use 3.x stable",
+                        "expires": "2026-12-31"
+                    },
+                    "62582": {
+                        "reason": "aiohttp 4.0.0a vulnerability - we use 3.x stable",
+                        "expires": "2026-12-31"
+                    },
+                    "83159": {
+                        "reason": "marshmallow 4.x vulnerability - we use 3.x stable",
+                        "expires": "2026-12-31"
+                    },
+                    "85102": {
+                        "reason": "transformers 5.x migration pending - input validation in place",
+                        "expires": "2026-06-30"
+                    }
+                },
+                "cvss-severity": []
+            }
+        }
+    }
+}

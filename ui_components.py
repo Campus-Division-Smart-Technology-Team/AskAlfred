@@ -7,9 +7,10 @@ Enhanced with building cache status display.
 
 import os
 from datetime import datetime, timezone
+from html import escape
 import streamlit as st
 import requests
-from markupsafe import escape
+from sanitise_context import display_safe_publication_date_info, display_safe_low_score_warning
 from clients import get_redis
 from config import (
     TARGET_INDEXES,
@@ -375,7 +376,7 @@ def render_service_status():
             st.markdown(f"**{item_label}**")
             cols = st.columns(len(service_order))
             for idx, svc in enumerate(service_order):
-                text, sev = item["statuses"].get(svc, ("", "info"))
+                _, sev = item["statuses"].get(svc, ("", "info"))
                 if sev == "ok":
                     color = "#28a745"
                     bg = "rgba(40, 167, 69, 0.15)"
@@ -437,19 +438,6 @@ def display_search_results(results):
                 st.markdown("---")
 
 
-def display_publication_date_info(publication_date_info):
-    """Display publication date information safely."""
-    if publication_date_info:
-        # Escape HTML to prevent injection attacks
-        safe_content = escape(publication_date_info)
-        st.markdown(f"📅 {safe_content}")
-
-
-def display_low_score_warning():
-    """Display low score warning safely."""
-    st.markdown("⚠️ **Results below relevance threshold**")
-
-
 def initialise_chat_history():
     """Initialise chat history if not present."""
     if "messages" not in st.session_state:
@@ -474,11 +462,12 @@ def display_chat_history():
 
             # Display publication date info if it exists
             if "publication_date_info" in message and message["publication_date_info"]:
-                display_publication_date_info(message["publication_date_info"])
+                display_safe_publication_date_info(
+                    message["publication_date_info"])
 
             # Display low score warning if applicable
             if message.get("score_too_low", False):
-                display_low_score_warning()
+                display_safe_low_score_warning()
 
             # Display search results if they exist
             if "results" in message:

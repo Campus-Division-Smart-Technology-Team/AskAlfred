@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Optional, TypedDict
 
 from alfred_exceptions import ConfigError, RoutingError
+from env_bootstrap import load_local_env
+
+load_local_env()
 
 from .constant import (
     ANSWER_MODEL,
@@ -42,22 +45,18 @@ from .constant import (
     DocumentTypes,
 )
 
-# Try to load a local .env if python-dotenv is available; otherwise, ignore
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except Exception:  # pylint: disable=broad-except
-    pass
-
-# NOTE: Do NOT store secrets in environment variables
-# (they remain as plaintext in process memory and child processes can access them)
-# Use credential_manager module instead, which loads credentials on-demand.
-# The credential_manager loads credentials fresh from environment each time,
-# not storing them in memory longer than the client initialization needs.
+# NOTE: This project currently sources runtime credentials from environment
+# variables, including values loaded from a local .env during development.
+# Access them via credential_manager, which retrieves values on demand rather
+# than keeping long-lived copies in application objects.
 #
-# If using Streamlit Cloud secrets, ensure they're only accessed via
-# streamlit.secrets interface directly (not stored in os.environ).
+# For local development, .env-backed environment variables are acceptable.
+# For shared, staged, or production deployments, prefer a managed secret store
+# or platform secret injection rather than committing secrets or distributing
+# raw .env files.
+#
+# If using Streamlit Cloud secrets, keep sensitive values in
+# streamlit.secrets and avoid copying them into logs or persistent files.
 
 # ===========================================================================
 # NAMESPACE UTILITIES

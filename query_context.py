@@ -48,6 +48,12 @@ class QueryContext:
     building_filter: Optional[str] = None
     history: Optional[list[dict[str, Any]]] = None
     rolling_summary: Optional[str] = None
+    user_id: str = "anonymous"
+    user_name: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_roles: tuple[str, ...] = field(default_factory=tuple)
+    authenticated: bool = False
+    auth_source: str = "anonymous"
 
     # Preprocessor-enriched attributes
     building: Optional[str] = None
@@ -109,7 +115,7 @@ class QueryContext:
     def __repr__(self) -> str:
         return (
             f"QueryContext("
-            f"query={self.query!r}, building={self.building!r}, "
+            f"query={self.query!r}, user_id={self.user_id!r}, building={self.building!r}, "
             f"document_type={self.document_type!r}, complexity={self.complexity!r}, "
             f"prev_intent={self.previous_intent!r})"
         )

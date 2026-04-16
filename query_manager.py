@@ -697,7 +697,7 @@ class QueryManager:
         # Ensure we capture building context which influences the search results
         building_part = context.building_filter or ""
 
-        return f"{query_part}:{context.top_k}:{building_part}"
+        return f"{context.user_id}:{query_part}:{context.top_k}:{building_part}"
 
     def _update_stats(
         self, handler_class_name: str, query_type: str, elapsed_ms: float, success: bool
@@ -814,7 +814,9 @@ class QueryManager:
 # ============================================================================
 
 
-def process_query_unified(user_query: str, top_k: int = 10, **kwargs) -> tuple[
+def process_query_unified(
+    user_query: str, top_k: int = 10, **kwargs
+) -> tuple[
     list[Any],  # results from semantic search
     Optional[str],  # answer
     Any,  # publication_date_info

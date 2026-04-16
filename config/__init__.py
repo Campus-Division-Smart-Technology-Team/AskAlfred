@@ -2,6 +2,10 @@
 Config package exports.
 """
 
+from env_bootstrap import load_local_env
+
+load_local_env()
+
 from . import constant, settings
 
 # Explicit re-export of commonly used items to avoid wildcard imports

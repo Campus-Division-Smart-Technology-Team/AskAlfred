@@ -18,6 +18,7 @@ import pytest
 
 from credential_manager import (
     EnvironmentCredentialProvider,
+    SecureCredentialManager,
 )
 
 
@@ -457,6 +458,53 @@ class TestSecurityProperties:
                 # Exception message should not contain the secret value
                 # (there shouldn't be any secret in the environment anyway)
                 pass
+
+
+class TestSecureCredentialManagerAzureValidation:
+    """Tests for explicit Azure auth variable validation helpers."""
+
+    def test_get_missing_azure_credentials_detects_missing_values(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_TENANT_ID": "tenant-value",
+                "AZURE_CLIENT_ID": "client-value",
+                # secret intentionally missing
+            },
+            clear=True,
+        ):
+            missing = SecureCredentialManager.get_missing_azure_credentials(
+                include_client_secret=True
+            )
+
+            assert missing == ["AZURE_CLIENT_SECRET"]
+
+    def test_validate_azure_credentials_without_secret(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_TENANT_ID": "tenant-value",
+                "AZURE_CLIENT_ID": "client-value",
+            },
+            clear=True,
+        ):
+            assert SecureCredentialManager.validate_azure_credentials(
+                include_client_secret=False
+            )
+
+    def test_validate_azure_credentials_with_secret(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_TENANT_ID": "tenant-value",
+                "AZURE_CLIENT_ID": "client-value",
+                "AZURE_CLIENT_SECRET": "secret-value",
+            },
+            clear=True,
+        ):
+            assert SecureCredentialManager.validate_azure_credentials(
+                include_client_secret=True
+            )
 
     def test_object_repr_no_credentials(self):
         """Test that object representation doesn't expose credentials."""

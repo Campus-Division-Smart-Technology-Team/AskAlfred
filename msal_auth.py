@@ -6,15 +6,22 @@ Handles secure credential loading from credential manager.
 """
 
 import logging
+import os
 from typing import Optional
 
 import msal
 
 from alfred_exceptions import ConfigError
 from credential_manager import SecureCredentialManager
+from env_bootstrap import load_local_env
 from log_sanitiser import sanitise_error
 
+load_local_env()
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_SCOPES = ["email", "User.Read"]
+MSAL_RESERVED_SCOPES = {"openid", "offline_access", "profile"}
 
 
 def _get_azure_config() -> dict[str, str]:
@@ -33,7 +40,7 @@ def _get_azure_config() -> dict[str, str]:
         ) from e
 
 
-def _get_authority() -> str:
+def _get_authority(allow_common_fallback: bool = False) -> str:
     """
     Build MSAL authority URL.
 
@@ -42,16 +49,47 @@ def _get_authority() -> str:
     try:
         tenant_id = SecureCredentialManager.get_azure_tenant_id()
         return f"https://login.microsoftonline.com/{tenant_id}"
-    except KeyError:
-        # Return generic authority if tenant not available yet
-        return "https://login.microsoftonline.com/common"
+    except KeyError as exc:
+        if allow_common_fallback:
+            return "https://login.microsoftonline.com/common"
+        raise ConfigError(
+            "Azure tenant ID not configured. Please set AZURE_TENANT_ID for "
+            "single-tenant authentication."
+        ) from exc
 
 
-SCOPES = ["User.Read"]  # minimal, safe default
+def get_login_scopes() -> list[str]:
+    """Return the configured login scopes for Entra ID sign-in."""
+    configured_scopes = os.getenv("AUTH_SCOPES", "")
+    raw_scopes = (
+        [scope.strip() for scope in configured_scopes.split(",") if scope.strip()]
+        if configured_scopes.strip()
+        else list(DEFAULT_SCOPES)
+    )
+
+    filtered_scopes = [
+        scope for scope in raw_scopes if scope.lower() not in MSAL_RESERVED_SCOPES
+    ]
+
+    if configured_scopes.strip():
+        removed_scopes = [
+            scope for scope in raw_scopes if scope.lower() in MSAL_RESERVED_SCOPES
+        ]
+        if removed_scopes:
+            logger.info(
+                "AUTH_SCOPES contained reserved MSAL scopes and they were ignored: %s",
+                ", ".join(removed_scopes),
+            )
+
+    return filtered_scopes or list(DEFAULT_SCOPES)
+
+
+SCOPES = get_login_scopes()
 
 
 def build_msal_app(
     cache: Optional[object] = None,
+    allow_common_fallback: bool = False,
 ) -> msal.ConfidentialClientApplication:
     """
     Build MSAL ConfidentialClientApplication for Azure AD authentication.
@@ -60,6 +98,8 @@ def build_msal_app(
 
     Args:
         cache: Optional token cache for credential storage
+        allow_common_fallback: Whether to fall back to the common authority
+            when no tenant ID is configured
 
     Returns:
         Configured MSAL ConfidentialClientApplication instance
@@ -72,7 +112,7 @@ def build_msal_app(
 
         return msal.ConfidentialClientApplication(
             client_id=config.get("AZURE_CLIENT_ID"),
-            authority=_get_authority(),
+            authority=_get_authority(allow_common_fallback=allow_common_fallback),
             client_credential=config.get("AZURE_CLIENT_SECRET"),
             token_cache=cache,
         )

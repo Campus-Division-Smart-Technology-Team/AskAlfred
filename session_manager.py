@@ -370,11 +370,14 @@ class SessionManager:
         Must be JSON-serializable for Streamlit.
         """
         with _get_conversation_state() as state:
-
             # Convert QueryContext to a clean dict
             compact = {
                 "query": context.query,
                 "final_query": context.query,
+                "user_id": context.user_id,
+                "user_name": context.user_name,
+                "tenant_id": context.tenant_id,
+                "authenticated": context.authenticated,
                 "building": context.building,
                 "buildings": context.buildings,
                 "business_terms": context.business_terms,
@@ -409,7 +412,6 @@ class SessionManager:
         Store the last predicted intent (as string) and optional confidence.
         """
         with _get_conversation_state() as state:
-
             # intent may be a QueryType enum or string
             state.last_intent = intent.value if hasattr(intent, "value") else intent
             state.last_intent_confidence = confidence

@@ -73,7 +73,7 @@ class EnvironmentCredentialProvider(CredentialProvider):
 
         if not isinstance(value, str) or not value.strip():
             raise ValueError(
-                f"Credential '{name}' is empty. " "Please provide a valid value."
+                f"Credential '{name}' is empty. Please provide a valid value."
             )
 
         return value
@@ -94,8 +94,7 @@ class EnvironmentCredentialProvider(CredentialProvider):
 
             if missing:
                 logger.warning(
-                    "Missing credentials: %s. "
-                    "Application may not function correctly.",
+                    "Missing credentials: %s. Application may not function correctly.",
                     ", ".join(missing),
                 )
                 return False
@@ -237,6 +236,30 @@ class SecureCredentialManager:
             }
         except KeyError as e:
             raise KeyError(f"Azure configuration incomplete: {e}") from e
+
+    @classmethod
+    def get_missing_azure_credentials(
+        cls, include_client_secret: bool = True
+    ) -> list[str]:
+        """Return a list of missing Azure authentication environment variables."""
+        required = ["AZURE_TENANT_ID", "AZURE_CLIENT_ID"]
+        if include_client_secret:
+            required.append("AZURE_CLIENT_SECRET")
+
+        missing: list[str] = []
+        for env_name in required:
+            value = os.environ.get(env_name)
+            if value is None or not str(value).strip():
+                missing.append(env_name)
+
+        return missing
+
+    @classmethod
+    def validate_azure_credentials(cls, include_client_secret: bool = True) -> bool:
+        """Validate required Azure authentication environment variables."""
+        return not cls.get_missing_azure_credentials(
+            include_client_secret=include_client_secret
+        )
 
     @classmethod
     def validate_all(cls) -> bool:

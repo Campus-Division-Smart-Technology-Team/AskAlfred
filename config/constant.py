@@ -19,6 +19,27 @@ IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
 # Debug logging for query routing (disabled in production for security)
 DEBUG_QUERY_MODE = not IS_PRODUCTION
 
+# Authentication rollout controls
+REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+ALLOW_ANONYMOUS_DEV = os.getenv("ALLOW_ANONYMOUS_DEV", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+AUTH_STRICT_TENANT = os.getenv("AUTH_STRICT_TENANT", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+AUTH_REDIRECT_URI = os.getenv("AUTH_REDIRECT_URI", "http://localhost:8501")
+
 DEFAULT_NAMESPACE: Optional[str] = None  # None means default namespace
 
 # ===========================================================================
@@ -320,6 +341,10 @@ RISK_LEVEL_MAP: dict[str, str] = {
 
 __all__ = [
     "DEBUG_QUERY_MODE",
+    "REQUIRE_AUTH",
+    "ALLOW_ANONYMOUS_DEV",
+    "AUTH_STRICT_TENANT",
+    "AUTH_REDIRECT_URI",
     "DEFAULT_NAMESPACE",
     "BUILDING_FUZZY_STRONG",
     "BUILDING_FUZZY_WEAK",

@@ -16,6 +16,12 @@ import streamlit as st
 from markupsafe import escape
 from openai import OpenAI
 
+from auth_manager import (
+    authentication_required,
+    ensure_authentication,
+    get_auth_context,
+    render_auth_sidebar,
+)
 from building.utils import (
     extract_building_from_query,
     get_cache_status,
@@ -226,6 +232,12 @@ def handle_chat_input(top_k: int):
     if not query:
         return
 
+    # Defense in depth: block submission if auth is required but session is not authenticated.
+    if authentication_required() and not get_auth_context().authenticated:
+        with st.chat_message("assistant", avatar=EMOJI_GORILLA):
+            st.warning("Please sign in to submit queries.")
+        return
+
     # Validate query
     is_valid, error_message = validate_query(query)
     if not is_valid:
@@ -275,6 +287,16 @@ def handle_query_with_manager(query: str, top_k: int):
                     building_filter=building,
                     history=st.session_state.messages,
                     rolling_summary=st.session_state.summary,
+                    user_id=st.session_state.get("user_id", "anonymous"),
+                    user_name=st.session_state.get("user_name"),
+                    tenant_id=st.session_state.get("tenant_id"),
+                    user_roles=tuple(st.session_state.get("user_roles", [])),
+                    authenticated=bool(st.session_state.get("authenticated", False)),
+                    auth_source=(
+                        "entra_id"
+                        if st.session_state.get("authenticated", False)
+                        else "anonymous"
+                    ),
                 )
 
                 # Store results
@@ -413,6 +435,11 @@ def render_result_item(
 
 def main():
     """Main application function."""
+    setup_page_config()
+    render_custom_css()
+
+    auth_context = ensure_authentication()
+
     # Initialise rate limiter with Redis client if available
     try:
         redis_client = ClientManager.get_redis()
@@ -424,9 +451,11 @@ def main():
         )
         initialise_rate_limiter(None)  # Falls back to in-memory
 
-    # Setup page
-    setup_page_config()
-    render_custom_css()
+    st.session_state.user_id = auth_context.user_id
+    st.session_state.user_name = auth_context.display_name
+    st.session_state.tenant_id = auth_context.tenant_id
+    st.session_state.user_roles = list(auth_context.roles)
+    st.session_state.authenticated = auth_context.authenticated
 
     # Initialise building cache
     t0 = time.time()
@@ -453,6 +482,7 @@ def main():
 
     # Render sidebar and get settings
     top_k = render_sidebar()
+    render_auth_sidebar()
 
     # Initialise and display chat
     initialise_chat_history()

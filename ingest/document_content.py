@@ -34,7 +34,6 @@ try:
     import textract  # type: ignore[import-untyped]
 except Exception:  # pylint: disable=broad-except
     textract = None
-from alfred_exceptions import ParseError, ValidationError
 from building import normalise_building_name
 from config import (
     INGEST_BACKOFF_BASE,
@@ -47,14 +46,15 @@ from config import (
     INGEST_FETCH_MAX_SIZE_MB,
     INGEST_PDF_MAX_PAGES,
 )
-from file_operations_validator import (
+from core.alfred_exceptions import ParseError, ValidationError
+from domain.maintenance_utils import normalise_priority
+from interfaces import EmbeddingsResult
+from security.file_operations_validator import (
     ALLOWED_INGEST_EXTENSIONS,
     FileSizeError,
     FileTypeError,
     validate_file_safety,
 )
-from interfaces import EmbeddingsResult
-from maintenance_utils import normalise_priority
 
 if TYPE_CHECKING:
     from .context import IngestContext

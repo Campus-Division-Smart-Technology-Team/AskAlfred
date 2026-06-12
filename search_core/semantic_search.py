@@ -8,9 +8,9 @@ from building.utils import (
     group_results_by_building,
     resolve_building_name_fuzzy,
 )
-from business_terms import BusinessTermMapper
 from config import MIN_SCORE_THRESHOLD, TARGET_INDEXES
-from generate_semantic_answer import (
+from domain.business_terms import BusinessTermMapper
+from search_core.generate_semantic_answer import (
     enhanced_answer_with_source_date,
     generate_building_focused_answer,
 )

@@ -17,9 +17,9 @@ from openai import OpenAI
 from pinecone import Pinecone
 from redis import Redis
 
-from alfred_exceptions import ConfigError
-from credential_manager import SecureCredentialManager
-from log_sanitiser import sanitise_message
+from auth.credential_manager import SecureCredentialManager
+from core.alfred_exceptions import ConfigError
+from security.log_sanitiser import sanitise_message
 
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 _DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0

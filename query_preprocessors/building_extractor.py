@@ -6,8 +6,8 @@ from building.utils import (
     get_building_names_from_cache,
 )
 from building.validation import is_valid_building_name
-from emojis import EMOJI_TICK
 from query_preprocessors.base_preprocessor import CachingPreprocessor
+from ui.emojis import EMOJI_TICK
 
 
 class BuildingExtractor(CachingPreprocessor):

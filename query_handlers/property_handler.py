@@ -9,12 +9,12 @@ Delegates logic to counting_queries.generate_property_condition_answer.
 
 import re
 
-from query_context import QueryContext
-from query_result import QueryResult
+from query_core.query_context import QueryContext
+from query_core.query_result import QueryResult
 
 # First party import
-from query_types import QueryType
-from structured_queries import (
+from query_core.query_types import QueryType
+from search_core.structured_queries import (
     generate_property_condition_answer,
     is_counting_query,
     is_maintenance_query,

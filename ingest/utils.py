@@ -27,15 +27,15 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from tqdm import tqdm
 
-from access_control import apply_acl_defaults, has_required_acl_metadata
-from alfred_exceptions import ExternalServiceError, RoutingError, ValidationError
+from auth.access_control import apply_acl_defaults, has_required_acl_metadata
 from config import (
     INGEST_DEFAULT_ACCESS_LEVEL,
     INGEST_DEFAULT_ALLOWED_ROLES,
     INGEST_DEFAULT_TENANT_ID,
     _route_namespace,
 )
-from pinecone_utils import sanitise_metadata_for_pinecone
+from core.alfred_exceptions import ExternalServiceError, RoutingError, ValidationError
+from core.pinecone_utils import sanitise_metadata_for_pinecone
 
 # ============================================================================
 # INGEST CONTEXT

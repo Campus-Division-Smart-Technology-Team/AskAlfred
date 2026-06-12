@@ -2,8 +2,8 @@
 
 import pytest
 
-from csv_sanitiser import csv_safe_cell, neutralise_csv_formula
-from extract_index_tocsv import format_value_for_csv
+from security.csv_sanitiser import csv_safe_cell, neutralise_csv_formula
+from tools.extract_index_tocsv import format_value_for_csv
 
 
 @pytest.mark.parametrize(

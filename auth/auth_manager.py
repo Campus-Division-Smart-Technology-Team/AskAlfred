@@ -13,17 +13,17 @@ from typing import Any
 
 import streamlit as st
 
-from alfred_exceptions import ConfigError
-from auth_context import ANONYMOUS_AUTH_CONTEXT, AuthContext
+from auth.auth_context import ANONYMOUS_AUTH_CONTEXT, AuthContext
+from auth.credential_manager import SecureCredentialManager
+from auth.msal_auth import build_msal_app, get_login_scopes
 from config import (
     ALLOW_ANONYMOUS_DEV,
     AUTH_REDIRECT_URI,
     AUTH_STRICT_TENANT,
     REQUIRE_AUTH,
 )
-from credential_manager import SecureCredentialManager
-from log_sanitiser import sanitise_error
-from msal_auth import build_msal_app, get_login_scopes
+from core.alfred_exceptions import ConfigError
+from security.log_sanitiser import sanitise_error
 
 logger = logging.getLogger(__name__)
 

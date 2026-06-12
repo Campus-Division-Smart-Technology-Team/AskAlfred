@@ -1,12 +1,12 @@
 from types import SimpleNamespace
 
 import ingest.utils as ingest_utils
-import structured_queries
-from access_control import filter_authorized_structured_matches
-from query_context import DENY_ALL_TENANT_ID, build_access_filter
+from auth.access_control import filter_authorized_structured_matches
+from query_core.query_context import DENY_ALL_TENANT_ID, build_access_filter
+from search_core import structured_queries
+from search_core.search_instructions import SearchInstructions
 from search_core.search_router import execute
 from search_core.search_utils import search_one_index
-from search_instructions import SearchInstructions
 
 
 def test_build_access_filter_is_empty_for_anonymous_sessions():

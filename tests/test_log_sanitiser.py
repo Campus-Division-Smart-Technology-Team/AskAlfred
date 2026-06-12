@@ -14,7 +14,7 @@ Tests security controls:
 
 import logging
 
-from log_sanitiser import (
+from security.log_sanitiser import (
     SanitisedFormatter,
     sanitise_dict,
     sanitise_error,

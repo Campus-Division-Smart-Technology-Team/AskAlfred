@@ -25,7 +25,7 @@ from config import (
     NO_JOB_REF_SCORE_MULTIPLIER,
     RISK_LEVEL_MAP,
 )
-from date_utils import parse_iso_date
+from core.date_utils import parse_iso_date
 
 from .enrichment import FRAEnricher
 from .types import EnrichedRiskItem, RiskItem

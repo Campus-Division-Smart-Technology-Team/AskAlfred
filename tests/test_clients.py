@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import clients
+from core import clients
 
 
 def test_get_redis_uses_bounded_timeouts_and_ssl(monkeypatch):

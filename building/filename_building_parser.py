@@ -12,8 +12,8 @@ Key changes from your current module:
 
 from __future__ import annotations
 
-import logging
 import csv
+import logging
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher, get_close_matches

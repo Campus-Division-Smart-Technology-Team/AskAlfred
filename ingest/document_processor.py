@@ -21,12 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from redis.exceptions import RedisError
 
-from alfred_exceptions import (
-    ExternalServiceError,
-    IngestError,
-    RoutingError,
-    ValidationError,
-)
+from building.filename_building_parser import should_flag_for_review
 from config import (
     INGEST_EMBED_BATCH_SIZE,
     INGEST_LOW_CONFIDENCE_WARN,
@@ -34,7 +29,12 @@ from config import (
     DocumentTypes,
     _route_namespace,
 )
-from filename_building_parser import should_flag_for_review
+from core.alfred_exceptions import (
+    ExternalServiceError,
+    IngestError,
+    RoutingError,
+    ValidationError,
+)
 from fra import FraVectorExtractResult, extract_fra_metadata
 
 from .document_content import (

@@ -10,8 +10,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from date_utils import parse_date_to_iso, parse_iso_date
-from pinecone_utils import sanitise_metadata_for_pinecone
+from core.date_utils import parse_date_to_iso, parse_iso_date
+from core.pinecone_utils import sanitise_metadata_for_pinecone
 
 from .doc_metadata import extract_assessment_date
 from .parse_helpers.parse_row import _RowParserMixin

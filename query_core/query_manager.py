@@ -17,10 +17,12 @@ from config import (
     QUERY_FOLLOWUP_ML_CONF_THRESHOLD,
     QUERY_RULE_OVERRIDE_THRESHOLD,
 )
-from emojis import EMOJI_CAUTION, EMOJI_CROSS, EMOJI_TICK, EMOJI_TIME
-from intent_classifier import NLPIntentClassifier
-from log_sanitiser import sanitise_error
-from query_context import QueryContext, build_access_filter
+from core.session_manager import SessionManager
+from query_core.intent_classifier import NLPIntentClassifier
+from query_core.query_context import QueryContext, build_access_filter
+from query_core.query_result import QueryResult
+from query_core.query_route import QueryRoute
+from query_core.query_types import QueryType
 from query_handlers import (
     ConversationalHandler,
     CountingHandler,
@@ -35,10 +37,8 @@ from query_preprocessors import (
     QueryComplexityAnalyser,
     SpellCheckPreprocessor,
 )
-from query_result import QueryResult
-from query_route import QueryRoute
-from query_types import QueryType
-from session_manager import SessionManager
+from security.log_sanitiser import sanitise_error
+from ui.emojis import EMOJI_CAUTION, EMOJI_CROSS, EMOJI_TICK, EMOJI_TIME
 
 # ============================================================================
 # FOLLOWUP CONFIGs
@@ -87,11 +87,19 @@ class QueryManager:
         "CONF_THRESHOLD": QUERY_CONF_THRESHOLD,
     }
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(
+        self,
+        config: Optional[dict] = None,
+        intent_classifier: Optional[NLPIntentClassifier] = None,
+    ):
         """
         Args:
             config (dict | None):
                 Optional handler configuration. If None, default handlers are used.
+            intent_classifier (NLPIntentClassifier | None):
+                Optional shared classifier instance. Pass one (e.g. from a
+                st.cache_resource factory) to avoid reloading the CT2 model
+                per QueryManager; if None, a new classifier is created.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.config = config
@@ -131,7 +139,10 @@ class QueryManager:
             "cached_queries": 0,
         }
 
-        self.intent_clf = NLPIntentClassifier()
+        if intent_classifier is not None:
+            self.intent_clf = intent_classifier
+        else:
+            self.intent_clf = NLPIntentClassifier()
 
         # Map QueryType
         self.intent_to_handler = {}

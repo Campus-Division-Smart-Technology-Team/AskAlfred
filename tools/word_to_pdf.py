@@ -15,6 +15,10 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 # Windows-specific imports
 try:
     import win32com.client
@@ -31,7 +35,7 @@ except ImportError:
 
 # Security: Import log sanitiser to prevent sensitive data exposure
 try:
-    from log_sanitiser import sanitise_error
+    from security.log_sanitiser import sanitise_error
 except ImportError:
     # Fallback if log_sanitiser not available
     def sanitise_error(error: Exception) -> str:

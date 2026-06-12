@@ -10,14 +10,14 @@ import logging
 import time
 from typing import Any, Optional
 
-from access_control import combine_pinecone_filters, filter_authorized_matches
+from auth.access_control import combine_pinecone_filters, filter_authorized_matches
 from building.utils import (
     create_building_metadata_filter,
     filter_results_by_building,
     result_matches_building,
 )
 from config import SEARCH_ALL_NAMESPACES, TARGET_INDEXES, get_index_config
-from pinecone_utils import (
+from core.pinecone_utils import (
     embed_texts,
     list_namespaces_for_index,
     normalise_matches,

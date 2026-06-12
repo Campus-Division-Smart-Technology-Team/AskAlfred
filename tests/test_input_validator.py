@@ -12,7 +12,7 @@ Tests security controls:
 import sys
 from pathlib import Path
 
-from input_validator import (
+from security.input_validator import (
     check_user_rate_limit,
     count_special_characters,
     get_validation_summary,

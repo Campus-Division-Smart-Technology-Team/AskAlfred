@@ -1,6 +1,6 @@
 # business_term_extractor.py
 
-from business_terms import BusinessTermMapper
+from domain.business_terms import BusinessTermMapper
 from query_preprocessors.base_preprocessor import CachingPreprocessor
 
 

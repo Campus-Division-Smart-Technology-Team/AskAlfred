@@ -2,8 +2,8 @@
 
 from typing import Any, Optional, Union
 
-from alfred_exceptions import RoutingError
-from search_instructions import SearchInstructions
+from core.alfred_exceptions import RoutingError
+from search_core.search_instructions import SearchInstructions
 
 from .maintenance_search import maintenance_search
 from .planon_search import planon_search

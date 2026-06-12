@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from alfred_exceptions import (
+from core.alfred_exceptions import (
     ValidationError,
 )
 

@@ -8,11 +8,11 @@ Delegates logic to generate_maintenance_answers.generate_maintenance_answer.
 """
 
 # First party import
-from generate_maintenance_answers import generate_maintenance_answer
-from query_context import QueryContext
-from query_result import QueryResult
-from query_types import QueryType
-from structured_queries import (
+from query_core.query_context import QueryContext
+from query_core.query_result import QueryResult
+from query_core.query_types import QueryType
+from search_core.generate_maintenance_answers import generate_maintenance_answer
+from search_core.structured_queries import (
     is_maintenance_query,
     is_property_condition_query,
     is_ranking_query,

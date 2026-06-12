@@ -19,8 +19,8 @@ from difflib import SequenceMatcher, get_close_matches
 from pathlib import Path
 from typing import Optional
 
+from building.filename_building_parser import extract_building_from_filename
 from building.normaliser import normalise_building_name
-from filename_building_parser import extract_building_from_filename
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:

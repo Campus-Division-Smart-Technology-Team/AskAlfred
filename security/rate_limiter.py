@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from functools import wraps
 from typing import Any, Optional
 
-from alfred_exceptions import RateLimitError
+from core.alfred_exceptions import RateLimitError
 
 logger = logging.getLogger(__name__)
 

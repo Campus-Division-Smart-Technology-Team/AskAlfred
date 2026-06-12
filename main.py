@@ -15,7 +15,7 @@ from typing import Any, Optional
 import streamlit as st
 from markupsafe import escape
 
-from auth_manager import (
+from auth.auth_manager import (
     authentication_required,
     ensure_authentication,
     get_auth_context,
@@ -26,7 +26,6 @@ from building.utils import (
     get_cache_status,
     populate_building_cache_from_multiple_indexes,
 )
-from clients import ClientManager
 from config import (
     DEFAULT_NAMESPACE,
     QUERY_MAX_LENGTH,
@@ -38,25 +37,26 @@ from config import (
     USE_QUERY_MANAGER,
 )
 from config.constant import IS_PRODUCTION
-from emojis import EMOJI_BOOKS, EMOJI_CAUTION, EMOJI_GORILLA, EMOJI_TIME
-from input_validator import get_validation_summary, validate_query_security
-from intent_classifier import warm_encoder_runtime_async
-from log_sanitiser import sanitise_error
-from query_context import build_access_filter
-from query_manager import QueryManager
-from rate_limiter import (
+from core.clients import ClientManager
+from query_core.intent_classifier import NLPIntentClassifier, warm_encoder_runtime_async
+from query_core.query_context import build_access_filter
+from query_core.query_manager import QueryManager
+from search_core.search_instructions import SearchInstructions
+from search_core.search_router import execute
+from security.input_validator import get_validation_summary, validate_query_security
+from security.log_sanitiser import sanitise_error
+from security.rate_limiter import (
     check_query_rate_limit,
     get_query_reset_time,
     initialise_rate_limiter,
 )
-from sanitise_context import (
+from security.sanitise_context import (
     display_safe_low_score_warning,
     display_safe_publication_date_info,
     safe_markdown,
 )
-from search_core.search_router import execute
-from search_instructions import SearchInstructions
-from ui_components import (
+from ui.emojis import EMOJI_BOOKS, EMOJI_CAUTION, EMOJI_GORILLA, EMOJI_TIME
+from ui.ui_components import (
     display_chat_history,
     initialise_chat_history,
     render_citation_legend,
@@ -152,6 +152,15 @@ MIN_QUERY_LENGTH = QUERY_MIN_LENGTH
 # ============================================================================
 # INITIALISATION
 # ============================================================================
+
+
+@st.cache_resource
+def get_intent_classifier() -> NLPIntentClassifier:
+    """
+    Process-wide intent classifier. The CT2 model load and intent embedding
+    generation happen once per server process instead of once per session.
+    """
+    return NLPIntentClassifier()
 
 
 @st.cache_resource
@@ -276,9 +285,12 @@ def handle_query_with_manager(query: str, top_k: int):
     This uses the centralised QueryManager for all routing decisions.
     """
 
-    # Persist the manager across Streamlit reruns
+    # Persist the manager across Streamlit reruns; the classifier (CT2 model +
+    # embeddings) is shared process-wide via st.cache_resource.
     if "manager" not in st.session_state:
-        st.session_state.manager = QueryManager()
+        st.session_state.manager = QueryManager(
+            intent_classifier=get_intent_classifier()
+        )
     manager = st.session_state.manager
 
     with st.chat_message("assistant", avatar=EMOJI_GORILLA):
@@ -525,7 +537,7 @@ def display_system_status():
             st.markdown("### 🔧 System Status")
 
             if USE_QUERY_MANAGER and "manager" in st.session_state:
-                manager = QueryManager()
+                manager = st.session_state.manager
                 stats = manager.get_statistics()
 
                 st.metric("Total Queries", stats["total_queries"])

@@ -22,7 +22,6 @@ from typing import Any, Optional, Protocol, cast
 
 import numpy as np
 
-from alfred_exceptions import ModelNotInitialisedError
 from config import (
     INTENT_BUILDING_CONDITION_BIAS,
     INTENT_BUILDING_COUNTING_BIAS,
@@ -46,19 +45,20 @@ from config import (
     INTENT_SOFTMAX_TEMPERATURE,
     LOCAL_MODEL_DIR,
 )
-from emojis import (
-    EMOJI_CAUTION,
-    EMOJI_CROSS,
-    EMOJI_TICK,
-    EMOJI_TIME,
-)
-from query_context import QueryContext
-from query_types import QueryType
-from structured_queries import (
+from core.alfred_exceptions import ModelNotInitialisedError
+from query_core.query_context import QueryContext
+from query_core.query_types import QueryType
+from search_core.structured_queries import (
     COUNTING_PATTERNS,
     MAINTENANCE_PATTERNS,
     RANKING_PATTERNS,
     is_property_condition_query,
+)
+from ui.emojis import (
+    EMOJI_CAUTION,
+    EMOJI_CROSS,
+    EMOJI_TICK,
+    EMOJI_TIME,
 )
 
 # hf_hub_ctranslate2 transitively imports transformers/torch, which costs tens of
@@ -289,6 +289,9 @@ class NLPIntentClassifier:
         self.intent_embeddings: dict[QueryType, dict[str, Any]] = {}
         self.enabled = False
         self._query_cache = {}
+        # The classifier is shared process-wide (st.cache_resource), so cache
+        # eviction must not race between Streamlit session threads.
+        self._query_cache_lock = threading.Lock()
         self._query_cache_max_size = INTENT_QUERY_CACHE_MAX_SIZE
         self._max_examples_per_intent = INTENT_MAX_EXAMPLES_PER_INTENT
         self._exact_example_intents = {
@@ -336,10 +339,10 @@ class NLPIntentClassifier:
 
                 # Store numpy arrays in npz
                 embeddings_dict[f"{intent_str}_mean"] = data["mean"]
-                embeddings_dict[f"{intent_str}_mean_norm"] = np.array(
-                    data.get("mean_norm", np.linalg.norm(data["mean"])).astype(
-                        np.float32
-                    )
+                # mean_norm is a Python float; .astype() on it would raise and
+                # abort the whole save, so convert via np.float32 instead.
+                embeddings_dict[f"{intent_str}_mean_norm"] = np.float32(
+                    data.get("mean_norm", np.linalg.norm(data["mean"]))
                 )
                 embeddings_dict[f"{intent_str}_embeddings"] = data["embeddings"]
                 if "embeddings_norms" in data:
@@ -587,8 +590,9 @@ class NLPIntentClassifier:
 
     def _get_query_embedding_cached(self, query: str) -> np.ndarray:
         """Instance-level cache for query embeddings"""
-        if query in self._query_cache:
-            return self._query_cache[query]
+        with self._query_cache_lock:
+            if query in self._query_cache:
+                return self._query_cache[query]
 
         if self.model is None:
             raise ModelNotInitialisedError(
@@ -600,13 +604,17 @@ class NLPIntentClassifier:
         model = self.model
         emb = model.encode([query], convert_to_numpy=True)[0]
 
-        # Simple LRU: if cache full, remove oldest (FIFO as approximation)
-        if len(self._query_cache) >= self._query_cache_max_size:
-            # Remove first item (oldest in dict order in Python 3.7+)
-            self._query_cache.pop(next(iter(self._query_cache)))
-
-        self._query_cache[query] = emb
+        self._cache_query_embedding(query, emb)
         return emb
+
+    def _cache_query_embedding(self, query: str, emb: np.ndarray) -> None:
+        """Insert into the query cache, evicting the oldest entry if full."""
+        with self._query_cache_lock:
+            # Simple LRU: if cache full, remove oldest (FIFO as approximation)
+            if len(self._query_cache) >= self._query_cache_max_size:
+                # Remove first item (oldest in dict order in Python 3.7+)
+                self._query_cache.pop(next(iter(self._query_cache)))
+            self._query_cache[query] = emb
 
     # ------------------------------------------------------------------
     # INTENT CLASSIFICATION
@@ -761,13 +769,14 @@ class NLPIntentClassifier:
             uncached_indices = []
             uncached_queries = []
 
-            for i, query in enumerate(queries):
-                if query in self._query_cache:
-                    embeddings.append(self._query_cache[query])
-                else:
-                    embeddings.append(None)  # Placeholder
-                    uncached_indices.append(i)
-                    uncached_queries.append(query)
+            with self._query_cache_lock:
+                for i, query in enumerate(queries):
+                    if query in self._query_cache:
+                        embeddings.append(self._query_cache[query])
+                    else:
+                        embeddings.append(None)  # Placeholder
+                        uncached_indices.append(i)
+                        uncached_queries.append(query)
 
             # Batch encode only uncached queries
             if uncached_queries:
@@ -776,10 +785,7 @@ class NLPIntentClassifier:
                 )
                 for idx, emb in zip(uncached_indices, fresh_embeddings):
                     embeddings[idx] = emb
-                    # Add to cache
-                    if len(self._query_cache) >= self._query_cache_max_size:
-                        self._query_cache.pop(next(iter(self._query_cache)))
-                    self._query_cache[queries[idx]] = emb
+                    self._cache_query_embedding(queries[idx], emb)
 
         except Exception as e:
             self.logger.warning(

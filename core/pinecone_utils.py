@@ -8,8 +8,8 @@ import json
 import logging
 from typing import Any, Optional
 
-from clients import get_oai, get_pc
 from config import normalise_ns
+from core.clients import get_oai, get_pc
 
 
 def list_index_names() -> list[str]:

@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from query_types import QueryType
+from query_core.query_types import QueryType
 
 DENY_ALL_TENANT_ID = "__deny_access__"
 

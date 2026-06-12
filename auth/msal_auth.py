@@ -11,10 +11,10 @@ from typing import Optional
 
 import msal
 
-from alfred_exceptions import ConfigError
-from credential_manager import SecureCredentialManager
-from env_bootstrap import load_local_env
-from log_sanitiser import sanitise_error
+from auth.credential_manager import SecureCredentialManager
+from core.alfred_exceptions import ConfigError
+from core.env_bootstrap import load_local_env
+from security.log_sanitiser import sanitise_error
 
 load_local_env()
 

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from markupsafe import escape
 
-from sanitise_context import (
+from security.sanitise_context import (
     display_safe_low_score_warning,
     display_safe_publication_date_info,
     safe_markdown,
@@ -77,7 +77,7 @@ class TestHTMLEscaping:
 class TestSafeMarkdownRendering:
     """Test safe markdown rendering function."""
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_escapes_html(self, mock_markdown):
         """Test that safe_markdown escapes HTML."""
         content = '<script>alert("test")</script>'
@@ -89,7 +89,7 @@ class TestSafeMarkdownRendering:
         # Should be escaped
         assert "<script>" not in call_args
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_uses_unsafe_html_false(self, mock_markdown):
         """Test that safe_markdown disables unsafe_allow_html."""
         safe_markdown("Test content")
@@ -98,7 +98,7 @@ class TestSafeMarkdownRendering:
         # Second arg should be unsafe_allow_html=False
         assert mock_markdown.call_args[1].get("unsafe_allow_html") is False
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_with_none(self, mock_markdown):
         """Test that None content is handled."""
         safe_markdown(None)
@@ -106,14 +106,14 @@ class TestSafeMarkdownRendering:
         # Should not call st.markdown if content is None
         mock_markdown.assert_not_called()
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_with_empty_string(self, mock_markdown):
         """Test that empty string is handled."""
         safe_markdown("")
 
         mock_markdown.assert_not_called()
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_preserves_legitimate_content(self, mock_markdown):
         """Test that legitimate content is preserved."""
         content = "This is **bold** and *italic* text"
@@ -125,7 +125,7 @@ class TestSafeMarkdownRendering:
         assert "bold" in call_args
         assert "italic" in call_args
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_with_markdown_syntax(self, mock_markdown):
         """Test that markdown syntax is preserved."""
         content = "# Title\n\n- List item\n- Another item"
@@ -139,7 +139,7 @@ class TestSafeMarkdownRendering:
 class TestPublicationDateDisplay:
     """Test safe publication date display."""
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_publication_date_escaped(self, mock_markdown):
         """Test that publication date info is escaped."""
         date_info = '<img src=x onerror="alert(1)">2024-01-15'
@@ -151,7 +151,7 @@ class TestPublicationDateDisplay:
         # Should be HTML-escaped (markupsafe.escape converts < to &lt;)
         assert "&lt;img" in call_args or "<img" not in call_args
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_publication_date_emoji_included(self, mock_markdown):
         """Test that date emoji is included."""
         date_info = "2024-01-15"
@@ -160,21 +160,21 @@ class TestPublicationDateDisplay:
         call_args = mock_markdown.call_args[0][0]
         assert "📅" in call_args
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_publication_date_none_not_displayed(self, mock_markdown):
         """Test that None date is not displayed."""
         display_safe_publication_date_info(None)
 
         mock_markdown.assert_not_called()
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_publication_date_empty_not_displayed(self, mock_markdown):
         """Test that empty date is not displayed."""
         display_safe_publication_date_info("")
 
         mock_markdown.assert_not_called()
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_publication_date_with_injection(self, mock_markdown):
         """Test that injected JavaScript is escaped."""
         date_info = '<script>alert("xss")</script> 2024-01-15'
@@ -188,7 +188,7 @@ class TestPublicationDateDisplay:
 class TestLowScoreWarning:
     """Test low score warning display."""
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_warning_displayed(self, mock_markdown):
         """Test that warning message is displayed."""
         display_safe_low_score_warning()
@@ -200,7 +200,7 @@ class TestLowScoreWarning:
         assert "⚠️" in call_args
         assert "relevance threshold" in call_args.lower()
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_warning_uses_safe_markdown(self, mock_markdown):
         """Test that safe markdown is used for warning."""
         display_safe_low_score_warning()
@@ -356,7 +356,7 @@ def code():
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_very_long_content(self, mock_markdown):
         """Test handling of very long content."""
         content = "A" * 10000
@@ -364,7 +364,7 @@ class TestEdgeCases:
 
         mock_markdown.assert_called_once()
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_unicode_content(self, mock_markdown):
         """Test handling of unicode content."""
         content = "你好世界 🌍 Привет мир"
@@ -388,7 +388,7 @@ class TestEdgeCases:
         stripped = strip_markdown_and_code(text)
         assert "Hello" in stripped
 
-    @patch("sanitise_context.st.markdown")
+    @patch("security.sanitise_context.st.markdown")
     def test_safe_markdown_with_special_markdown_chars(self, mock_markdown):
         """Test safe_markdown with special characters."""
         content = "Price: $50 | Rating: 4/5 & highly recommended"

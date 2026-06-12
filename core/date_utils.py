@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from config import DEFAULT_EMBED_MODEL, DIMENSION
-from pinecone_utils import normalise_matches, vector_query
+from core.pinecone_utils import normalise_matches, vector_query
 
 logger = logging.getLogger(__name__)
 # ============================================================================

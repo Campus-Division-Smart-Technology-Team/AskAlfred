@@ -11,8 +11,8 @@ from building import (
     BuildingCacheManager,
     normalise_building_name,
 )
-from log_sanitiser import sanitise_error
 from query_preprocessors.base_preprocessor import BasePreprocessor
+from security.log_sanitiser import sanitise_error
 
 
 class SpellCheckPreprocessor(BasePreprocessor):

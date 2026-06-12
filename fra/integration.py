@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
 
-from alfred_exceptions import ExternalServiceError, IngestError, wrap_exception
 from building.normaliser import normalise_building_name
 from config import (
     FRA_RISK_ITEMS_NAMESPACE,
@@ -19,7 +18,8 @@ from config import (
     PAGE_LIMIT,
 )
 from config.constant import FRA_PARTITION_KEY_BUCKET_SIZE
-from date_utils import parse_iso_date
+from core.alfred_exceptions import ExternalServiceError, IngestError, wrap_exception
+from core.date_utils import parse_iso_date
 from interfaces import JobRecord
 
 from .types import EnrichedRiskItem

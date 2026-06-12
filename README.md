@@ -168,7 +168,7 @@ Files are processed by `DocumentProcessor`, which extracts text, chunks, and (fo
 | → `semantic_search_handler.py` | Fallback search handler for all remaining queries using Pinecone semantic vector retrieval + OpenAI summarisation. |
 | **`search_core` package** | Unified structured + semantic retrieval engine |
 | → `search_router.py` | Unified entry point for structured and semantic searches. |
-| **`search_instructions.py`** | Defines `SearchInstructions` dataclass to pass structured search intent (root-level module, used by search_core). |
+| **`search_instructions.py`** | Defines `SearchInstructions` dataclass to pass structured search intent (lives in `search_core`). |
 | **`search_core` package (cont.)** |  |
 | → `planon_search.py` | Handles property and Planon-related structured queries. |
 | → `maintenance_search.py` | Handles structured maintenance vector lookups. |
@@ -177,6 +177,37 @@ Files are processed by `DocumentProcessor`, which extracts text, chunks, and (fo
 | **`structured_queries.py`** | Rule-based structured detection for counting, ranking, maintenance, and property queries. |
 | **`config/constant.py`** | Constants for environment, models, and routing configuration. |
 | **`config/settings.py`** | Environment, API keys, and Pinecone/OpenAI configuration. |
+
+---
+
+## 📁 Project Layout
+
+```
+AskAlfred/
+├── main.py               # Streamlit entry point (poetry run streamlit run main.py)
+├── core/                 # Shared infrastructure: clients, env bootstrap, sessions,
+│                         #   Redis locks, Pinecone utils, date utils, exceptions
+├── auth/                 # Authentication & authorisation: MSAL, credential manager,
+│                         #   auth context, access control
+├── security/             # Input/file validation, log & CSV sanitisation, rate limiting
+├── query_core/           # Query engine: QueryManager, intent classifier, query
+│                         #   context/result/route/types
+├── query_handlers/       # Chain-of-responsibility handlers, one per intent
+├── query_preprocessors/  # Building/business-term extraction, spell check, complexity
+├── search_core/          # Structured + semantic retrieval, answer generation,
+│                         #   search instructions
+├── domain/               # Business terminology and maintenance-data helpers
+├── building/             # Building cache, normalisation, resolution, filename parsing
+├── fra/                  # Fire Risk Assessment parsing, triage and enrichment
+├── ingest/               # Document ingestion pipeline
+├── interfaces/           # Abstract interfaces (embedder, vector store, registries)
+├── ui/                   # Streamlit UI components and emoji constants
+├── config/               # Settings and constants
+├── cli/                  # Batch ingest / building resolution entry points
+├── scripts/              # Security scan entry point (poetry script: security-scan)
+├── tools/                # Developer tools and one-off analysis scripts
+└── tests/                # Pytest suite
+```
 
 ---
 

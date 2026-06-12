@@ -10,7 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 import ingest.upsert_handler as upsert_handler
-from alfred_exceptions import RetriableError
+from core.alfred_exceptions import RetriableError
 from ingest.helpers import UpsertQueueItem
 
 

@@ -17,16 +17,16 @@ if str(ROOT) not in sys.path:
 
 from dotenv import load_dotenv
 
-from alfred_exceptions import ConfigError, UnexpectedError
 from config import NAMESPACE_MAPPINGS, BatchIngestConfig
-from file_operations_validator import (
-    FileOperationSecurityError,
-    validate_directory_safety,
-)
+from core.alfred_exceptions import ConfigError, UnexpectedError
 from ingest import (
     IngestContext,
     ingest_local_directory_with_progress,
     validate_namespace_routing,
+)
+from security.file_operations_validator import (
+    FileOperationSecurityError,
+    validate_directory_safety,
 )
 
 

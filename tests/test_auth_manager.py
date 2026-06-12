@@ -5,13 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-import auth_manager
-from alfred_exceptions import ConfigError
-from auth_manager import (
+from auth import auth_manager
+from auth.auth_manager import (
     _build_auth_context_from_claims,
     _get_or_create_auth_flow,
     _normalise_query_params,
 )
+from core.alfred_exceptions import ConfigError
 
 
 def test_normalise_query_params_flattens_lists():

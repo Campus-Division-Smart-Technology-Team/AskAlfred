@@ -15,7 +15,6 @@ import logging
 import re
 from typing import Any, Optional
 
-from clients import get_oai
 from config import (
     ANSWER_MODEL,
     ANSWER_TEMPERATURE_COMPARE,
@@ -24,14 +23,15 @@ from config import (
     DEFAULT_NAMESPACE,
     DocumentTypes,
 )
-from date_utils import (
+from core.clients import get_oai
+from core.date_utils import (
     PLANON_DATE_PATTERNS,
     format_display_date,
     parse_date_string,
     search_source_for_latest_date,
 )
-from emojis import EMOJI_BUILDING, EMOJI_CHART, EMOJI_DOCUMENT
-from pinecone_utils import open_index
+from core.pinecone_utils import open_index
+from ui.emojis import EMOJI_BUILDING, EMOJI_CHART, EMOJI_DOCUMENT
 
 # ============================================================================
 # CONSTANTS

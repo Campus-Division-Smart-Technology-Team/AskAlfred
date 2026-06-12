@@ -9,15 +9,21 @@ import csv
 import json
 import logging
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
 from pinecone import Pinecone
 
-from alfred_exceptions import ConfigError
-from csv_sanitiser import neutralise_csv_formula
-from pinecone_utils import desanitise_metadata_from_pinecone
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.alfred_exceptions import ConfigError  # noqa: E402
+from core.pinecone_utils import desanitise_metadata_from_pinecone  # noqa: E402
+from security.csv_sanitiser import neutralise_csv_formula  # noqa: E402
 
 # ---------------- Env & constants ----------------
 load_dotenv()

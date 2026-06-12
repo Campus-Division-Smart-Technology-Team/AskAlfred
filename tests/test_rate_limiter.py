@@ -12,7 +12,7 @@ Tests rate limiting controls:
 
 import time
 
-from rate_limiter import (
+from security.rate_limiter import (
     API_CALL_RATE_LIMIT_PER_MINUTE,
     FILE_PROCESSING_CONCURRENT_LIMIT,
     FILE_PROCESSING_RATE_LIMIT,

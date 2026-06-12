@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from file_operations_validator import (
+from security.file_operations_validator import (
     ALLOWED_DOCUMENT_EXTENSIONS,
     DANGEROUS_EXTENSIONS,
     DirectoryAccessError,

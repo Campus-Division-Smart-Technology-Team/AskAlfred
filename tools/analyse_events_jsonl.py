@@ -13,11 +13,15 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from config import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from config import (  # noqa: E402
     BUILDING_REVIEW_FILENAME_MIN_CONFIDENCE,
     BUILDING_REVIEW_TEXT_MIN_CONFIDENCE,
 )
-from csv_sanitiser import csv_safe_cell
+from security.csv_sanitiser import csv_safe_cell  # noqa: E402
 
 
 def load_events(path: Path):

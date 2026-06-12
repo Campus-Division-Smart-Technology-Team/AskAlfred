@@ -18,13 +18,15 @@ from pathlib import Path
 
 import streamlit as st
 
-from intent_classifier import INTENT_EXAMPLES, NLPIntentClassifier
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # pylint: disable=wrong-import-position
+from query_core.intent_classifier import (  # noqa: E402
+    INTENT_EXAMPLES,
+    NLPIntentClassifier,
+)
 
 
 def _build_samples() -> list[str]:

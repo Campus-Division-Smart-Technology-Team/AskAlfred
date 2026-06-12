@@ -14,7 +14,6 @@ import requests
 import streamlit as st
 
 from building import get_building_names_from_cache, get_cache_status
-from clients import get_redis
 from config import (
     DEFAULT_NAMESPACE,
     ENABLE_SERVICE_STATUS,
@@ -26,7 +25,8 @@ from config import (
     UI_TOP_K_MAX,
     UI_TOP_K_MIN,
 )
-from sanitise_context import (
+from core.clients import get_redis
+from security.sanitise_context import (
     display_safe_low_score_warning,
     display_safe_publication_date_info,
 )

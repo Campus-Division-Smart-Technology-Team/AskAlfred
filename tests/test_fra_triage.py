@@ -11,7 +11,7 @@ import pytest
 
 def _load_triage(repo_root: Path):
     # Stub date_utils to keep tests lightweight.
-    stub_date_utils = types.ModuleType("date_utils")
+    stub_date_utils = types.ModuleType("core.date_utils")
 
     def parse_iso_date(value):
         if not value:
@@ -25,7 +25,7 @@ def _load_triage(repo_root: Path):
             return None
 
     setattr(stub_date_utils, "parse_iso_date", parse_iso_date)
-    sys.modules["date_utils"] = stub_date_utils
+    sys.modules["core.date_utils"] = stub_date_utils
 
     # Load config.constant and expose only constants via a stub config module.
     spec_const = importlib.util.spec_from_file_location(

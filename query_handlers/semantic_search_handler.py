@@ -10,13 +10,13 @@ import time
 from typing import Any, Optional, cast
 
 import search_core
-from alfred_exceptions import RoutingError
-from log_sanitiser import sanitise_error
-from query_context import QueryContext
-from query_result import QueryResult
-from query_types import QueryType
+from core.alfred_exceptions import RoutingError
+from query_core.query_context import QueryContext
+from query_core.query_result import QueryResult
+from query_core.query_types import QueryType
+from search_core.search_instructions import SearchInstructions
 from search_core.search_router import execute
-from search_instructions import SearchInstructions
+from security.log_sanitiser import sanitise_error
 
 from .base_handler import BaseQueryHandler
 

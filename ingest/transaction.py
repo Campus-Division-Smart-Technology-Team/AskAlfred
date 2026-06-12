@@ -14,15 +14,6 @@ from datetime import datetime, timezone
 from threading import Lock, RLock
 from typing import TYPE_CHECKING, Any, Optional
 
-from alfred_exceptions import (
-    ExternalServiceError,
-    IngestError,
-    ModelNotInitialisedError,
-    ParseError,
-    RollbackError,
-    RoutingError,
-    ValidationError,
-)
 from config import (
     FRA_LOCK_TIMEOUT_SECONDS,
     FRA_RISK_ITEMS_NAMESPACE,
@@ -34,6 +25,16 @@ from config import (
     get_display_namespace,
 )
 from config.constant import INGEST_METADATA_CACHE_SIZE
+from core.alfred_exceptions import (
+    ExternalServiceError,
+    IngestError,
+    ModelNotInitialisedError,
+    ParseError,
+    RollbackError,
+    RoutingError,
+    ValidationError,
+)
+from core.pinecone_utils import NULL_SENTINEL
 from fra import (
     EnrichedRiskItem,
     FRAActionPlanParser,
@@ -47,7 +48,6 @@ from fra import (
     sanitise_risk_item_for_metadata,
 )
 from interfaces import FileRecord, MetricsReader
-from pinecone_utils import NULL_SENTINEL
 
 from .document_content import (
     backoff_sleep,

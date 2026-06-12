@@ -5,13 +5,22 @@ import logging
 import re
 from typing import Any, Optional, cast
 
-from access_control import filter_authorized_structured_matches
+from auth.access_control import filter_authorized_structured_matches
 from building.utils import (
     BuildingCacheManager,
 )
 from building.validation import sanitise_building_candidate
 from config import TARGET_INDEXES
-from emojis import (
+from core.pinecone_utils import open_index
+from domain.maintenance_utils import (
+    aggregate_request_metrics,
+    aggregate_request_metrics_by_category,
+    filter_maintenance_buildings,
+    format_multi_building_metrics,
+    is_request_metrics,
+    parse_maintenance_query,
+)
+from ui.emojis import (
     EMOJI_BRAIN,
     EMOJI_BUILDING,
     EMOJI_CAUTION,
@@ -21,15 +30,6 @@ from emojis import (
     EMOJI_SEARCH,
     EMOJI_TICK,
 )
-from maintenance_utils import (
-    aggregate_request_metrics,
-    aggregate_request_metrics_by_category,
-    filter_maintenance_buildings,
-    format_multi_building_metrics,
-    is_request_metrics,
-    parse_maintenance_query,
-)
-from pinecone_utils import open_index
 
 
 def generate_maintenance_answer(

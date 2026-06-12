@@ -1,7 +1,7 @@
 import re
 from typing import Optional, TypedDict
 
-from date_utils import parse_date_to_iso
+from core.date_utils import parse_date_to_iso
 
 
 class FRAMetadata(TypedDict, total=False):

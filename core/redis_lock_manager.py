@@ -9,7 +9,6 @@ from typing import Any, Optional, Protocol
 
 from redis import Redis
 
-from alfred_exceptions import DeadlockError
 from config import (
     FRA_LOCK_ACQUIRE_SECONDS,
     REDIS_LOCK_DEFAULT_TTL_MS,
@@ -17,6 +16,7 @@ from config import (
     REDIS_LOCK_KEY_PREFIX,
     REDIS_LOCK_RETRY_INTERVAL_S,
 )
+from core.alfred_exceptions import DeadlockError
 
 
 class MetricsRecorder(Protocol):

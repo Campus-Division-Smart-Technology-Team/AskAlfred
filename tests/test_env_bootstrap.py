@@ -6,7 +6,7 @@ import os
 import sys
 from types import SimpleNamespace
 
-import env_bootstrap
+from core import env_bootstrap
 
 
 def _reset_bootstrap_state(monkeypatch):

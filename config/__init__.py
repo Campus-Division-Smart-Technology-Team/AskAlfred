@@ -2,7 +2,7 @@
 Config package exports.
 """
 
-from env_bootstrap import load_local_env
+from core.env_bootstrap import load_local_env
 
 load_local_env()
 

@@ -34,11 +34,6 @@ from enum import Enum, auto
 from queue import Queue
 from typing import TYPE_CHECKING, Any
 
-from alfred_exceptions import (
-    ExternalServiceError,
-    RetriableError,
-    RollbackError,
-)
 from config import (
     INGEST_BACKOFF_BASE,
     INGEST_BACKOFF_CAP,
@@ -47,6 +42,11 @@ from config import (
     INGEST_RETRY_ATTEMPTS,
     INGEST_UPSERT_SPLIT_MAX_DEPTH,
     INGEST_UPSERT_SPLIT_MIN_BATCH_SIZE,
+)
+from core.alfred_exceptions import (
+    ExternalServiceError,
+    RetriableError,
+    RollbackError,
 )
 
 from .document_processor import Writer

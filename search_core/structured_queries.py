@@ -15,7 +15,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional, cast
 
-from access_control import (
+from auth.access_control import (
     combine_pinecone_filters,
     filter_authorized_structured_matches,
 )
@@ -26,7 +26,12 @@ from building import (
     sanitise_building_candidate,
 )
 from config import TARGET_INDEXES, _route_namespace, get_display_namespace, normalise_ns
-from emojis import (
+from core.pinecone_utils import open_index, query_all_chunks
+from domain.maintenance_utils import _plural
+from search_core.generate_maintenance_answers import generate_maintenance_answer
+from security.input_validator import sanitise_pinecone_filter, validate_building_name
+from security.log_sanitiser import sanitise_error
+from ui.emojis import (
     EMOJI_BRAIN,
     EMOJI_CAUTION,
     EMOJI_CHART,
@@ -37,11 +42,6 @@ from emojis import (
     EMOJI_SEARCH,
     EMOJI_TICK,
 )
-from generate_maintenance_answers import generate_maintenance_answer
-from input_validator import sanitise_pinecone_filter, validate_building_name
-from log_sanitiser import sanitise_error
-from maintenance_utils import _plural
-from pinecone_utils import open_index, query_all_chunks
 
 # -----------------------------------------------------------------------------
 # Constants that need to be available before imports

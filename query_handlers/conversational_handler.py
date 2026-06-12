@@ -10,7 +10,10 @@ Handler for conversational queries (greetings, about, etc.).
 import random
 import re
 
-from emojis import (
+from query_core.query_context import QueryContext
+from query_core.query_result import QueryResult
+from query_core.query_types import QueryType
+from ui.emojis import (
     EMOJI_BUILDING,
     EMOJI_CHEEKY,
     EMOJI_FIRE,
@@ -18,9 +21,6 @@ from emojis import (
     EMOJI_MAINTENANCE,
     EMOJI_SMILE,
 )
-from query_context import QueryContext
-from query_result import QueryResult
-from query_types import QueryType
 
 from .base_handler import BaseQueryHandler
 

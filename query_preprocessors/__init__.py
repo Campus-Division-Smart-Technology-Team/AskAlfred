@@ -29,7 +29,7 @@ Available Preprocessors:
 
 Example Usage:
     from query_preprocessors import BuildingExtractor, BusinessTermExtractor
-    from query_manager import QueryContext
+    from query_core.query_manager import QueryContext
 
     # Create preprocessors
     building_extractor = BuildingExtractor()

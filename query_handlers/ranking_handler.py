@@ -9,19 +9,19 @@ Delegates ranking logic to counting_queries.generate_ranking_answer.
 
 import re
 
-from log_sanitiser import sanitise_error
-from query_context import QueryContext
-from query_result import QueryResult
+from query_core.query_context import QueryContext
+from query_core.query_result import QueryResult
 
 # First party import
-from query_types import QueryType
-from structured_queries import (
+from query_core.query_types import QueryType
+from search_core.structured_queries import (
     generate_ranking_answer,
     is_counting_query,
     is_maintenance_query,
     is_property_condition_query,
     is_ranking_query,
 )
+from security.log_sanitiser import sanitise_error
 
 # Local import
 from .base_handler import BaseQueryHandler

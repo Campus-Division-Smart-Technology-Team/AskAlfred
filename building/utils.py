@@ -32,9 +32,15 @@ from config import (
     TARGET_INDEXES,
     get_index_config,
 )
-from emojis import EMOJI_BUILDING, EMOJI_CAUTION, EMOJI_CROSS, EMOJI_SEARCH, EMOJI_TICK
-from input_validator import validate_building_name
-from pinecone_utils import open_index
+from core.pinecone_utils import open_index
+from security.input_validator import validate_building_name
+from ui.emojis import (
+    EMOJI_BUILDING,
+    EMOJI_CAUTION,
+    EMOJI_CROSS,
+    EMOJI_SEARCH,
+    EMOJI_TICK,
+)
 
 from .cache import _CACHE_STATE
 from .cache import (

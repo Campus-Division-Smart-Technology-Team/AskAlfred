@@ -10,13 +10,13 @@ from pdfminer.high_level import extract_text
 
 def _load_parser(repo_root: Path):
     # Stub date_utils to avoid heavy imports
-    stub_date_utils = types.ModuleType("date_utils")
+    stub_date_utils = types.ModuleType("core.date_utils")
 
     def parse_date_to_iso(value):
         return value
 
     setattr(stub_date_utils, "parse_date_to_iso", parse_date_to_iso)
-    sys.modules["date_utils"] = stub_date_utils
+    sys.modules["core.date_utils"] = stub_date_utils
 
     # Stub config package and load constant.py directly (avoids streamlit deps)
     config_pkg = types.ModuleType("config")
@@ -33,9 +33,9 @@ def _load_parser(repo_root: Path):
     spec_const.loader.exec_module(mod_const)
 
     # Stub emojis module
-    stub_emojis = types.ModuleType("emojis")
+    stub_emojis = types.ModuleType("ui.emojis")
     setattr(stub_emojis, "EMOJI_TICK", "✓")
-    sys.modules["emojis"] = stub_emojis
+    sys.modules["ui.emojis"] = stub_emojis
 
     # Load fra.parser without fra/__init__
     fra_pkg = types.ModuleType("fra")

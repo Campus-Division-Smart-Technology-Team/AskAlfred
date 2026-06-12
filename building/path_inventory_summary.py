@@ -32,7 +32,6 @@ from openai import (
 )
 
 from building.path_inventory import PathEntry, scan_path
-from clients import get_oai
 from config.constant import (
     ANSWER_MODEL,
     INGEST_BACKOFF_BASE,
@@ -44,6 +43,7 @@ from config.constant import (
     INGEST_RETRY_EXP_MIN,
     INGEST_RETRY_EXP_MULTIPLIER,
 )
+from core.clients import get_oai
 from ingest.document_content import extract_text
 
 DEFAULT_EXTENSIONS = {

@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, TypedDict
 
-from alfred_exceptions import ConfigError, RoutingError
-from env_bootstrap import load_local_env
+from core.alfred_exceptions import ConfigError, RoutingError
+from core.env_bootstrap import load_local_env
 
 load_local_env()
 

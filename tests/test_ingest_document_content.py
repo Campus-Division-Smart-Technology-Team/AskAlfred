@@ -1,7 +1,7 @@
 import logging
 
 from building import normalise_building_name
-from filename_building_parser import FilenameBuildingResolver
+from building.filename_building_parser import FilenameBuildingResolver
 from ingest.document_content import (
     extract_maintenance_csv,
     is_fire_risk_assessment,

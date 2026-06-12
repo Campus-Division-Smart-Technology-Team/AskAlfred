@@ -20,7 +20,6 @@ from openai import (
     UnprocessableEntityError,
 )
 
-from clients import get_oai
 from config import (
     INGEST_EMBED_BATCH_SIZE,
     INGEST_EMBED_MAX_RETRIES,
@@ -28,6 +27,7 @@ from config import (
     INGEST_RETRY_EXP_MIN,
     INGEST_RETRY_EXP_MULTIPLIER,
 )
+from core.clients import get_oai
 
 
 class Embedder(Protocol):

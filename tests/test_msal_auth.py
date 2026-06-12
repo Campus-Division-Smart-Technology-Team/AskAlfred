@@ -3,9 +3,9 @@
 
 import pytest
 
-from alfred_exceptions import ConfigError
-from credential_manager import SecureCredentialManager
-from msal_auth import _get_authority, get_login_scopes
+from auth.credential_manager import SecureCredentialManager
+from auth.msal_auth import _get_authority, get_login_scopes
+from core.alfred_exceptions import ConfigError
 
 
 def test_get_authority_uses_configured_tenant(monkeypatch):

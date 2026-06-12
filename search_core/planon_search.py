@@ -1,5 +1,5 @@
 # search_core/planon_search.py
-from structured_queries import (
+from search_core.structured_queries import (
     generate_property_condition_answer,
     generate_ranking_answer,
 )

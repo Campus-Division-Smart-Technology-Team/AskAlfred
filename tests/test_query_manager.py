@@ -5,9 +5,9 @@ ensuring correct routing of queries to handlers and backward compatibility of re
 
 import pytest
 
-from query_manager import QueryManager, process_query_unified
-from query_result import QueryResult
-from query_types import QueryType
+from query_core.query_manager import QueryManager, process_query_unified
+from query_core.query_result import QueryResult
+from query_core.query_types import QueryType
 
 # Test queries with expected routing
 TEST_CASES = [

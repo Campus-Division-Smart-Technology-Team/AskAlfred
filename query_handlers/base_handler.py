@@ -8,8 +8,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from query_context import QueryContext
-from query_result import QueryResult
+from query_core.query_context import QueryContext
+from query_core.query_result import QueryResult
 
 
 class BaseQueryHandler(ABC):

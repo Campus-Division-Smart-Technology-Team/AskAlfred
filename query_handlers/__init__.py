@@ -22,7 +22,7 @@ Available Handlers:
 
 Example Usage:
     from query_handlers import ConversationalHandler
-    from query_manager import QueryContext, QueryResult
+    from query_core.query_manager import QueryContext, QueryResult
 
     handler = ConversationalHandler()
     context = QueryContext(query="Hello Alfred")

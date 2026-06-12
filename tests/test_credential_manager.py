@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from credential_manager import (
+from auth.credential_manager import (
     EnvironmentCredentialProvider,
     SecureCredentialManager,
 )

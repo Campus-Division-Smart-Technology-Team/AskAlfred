@@ -14,7 +14,6 @@ from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
 from redis import ConnectionPool, Redis
 
-from alfred_exceptions import ConfigError, IngestError
 from config import (
     REDIS_POOL_HEALTH_CHECK_INTERVAL_S,
     REDIS_POOL_MAX_CONNECTIONS,
@@ -22,6 +21,8 @@ from config import (
     REDIS_POOL_SOCKET_TIMEOUT_S,
     BatchIngestConfig,
 )
+from core.alfred_exceptions import ConfigError, IngestError
+from core.redis_lock_manager import DryRunRedisLockManager, RedisLockManager
 from interfaces import (
     Embedder,
     EventSink,
@@ -36,7 +37,6 @@ from interfaces import (
     RedisJobRegistry,
     VectorStore,
 )
-from redis_lock_manager import DryRunRedisLockManager, RedisLockManager
 
 from .transaction import (
     ThreadSafeCache,

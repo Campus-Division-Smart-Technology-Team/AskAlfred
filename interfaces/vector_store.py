@@ -4,8 +4,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Optional, Protocol
 
-from alfred_exceptions import ExternalServiceError
 from config import normalise_ns
+from core.alfred_exceptions import ExternalServiceError
 
 
 class VectorStore(Protocol):

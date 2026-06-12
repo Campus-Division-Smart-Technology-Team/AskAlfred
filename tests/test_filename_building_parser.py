@@ -1,13 +1,13 @@
 import pytest
 
 from building.alias_override import get_alias_override
-from building.utils import extract_building_from_query
-from filename_building_parser import (
+from building.filename_building_parser import (
     FilenameBuildingResolver,
     extract_building_from_filename,
     load_manual_building_overrides,
     should_flag_for_review,
 )
+from building.utils import extract_building_from_query
 
 
 @pytest.mark.parametrize(

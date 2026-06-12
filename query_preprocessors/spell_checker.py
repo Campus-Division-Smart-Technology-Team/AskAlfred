@@ -47,7 +47,8 @@ class SpellCheckPreprocessor(BasePreprocessor):
             "planon",
             "ppm",
             "ppm’s",
-            "ppm's" "goodbye",
+            "ppm's",
+            "goodbye",
         }
         self.protected_short_tokens = {
             "how",
@@ -207,10 +208,9 @@ class SpellCheckPreprocessor(BasePreprocessor):
                 context.add_to_cache("original_query", context.query)
                 context.add_to_cache("spell_corrected", True)
 
-                old_query = context.query
                 context.update_query(corrected)
 
-                self.logger.info("Corrected query: '%s' -> '%s'", old_query, corrected)
+                self.logger.debug("Spell correction applied to query")
             else:
                 context.add_to_cache("spell_corrected", False)
 

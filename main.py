@@ -22,11 +22,11 @@ from auth.auth_manager import (
     render_auth_sidebar,
 )
 from building.utils import (
-    extract_building_from_query,
     get_cache_status,
     populate_building_cache_from_multiple_indexes,
 )
 from config import (
+    ANSWER_MODEL,
     DEFAULT_NAMESPACE,
     QUERY_MAX_LENGTH,
     QUERY_MIN_LENGTH,
@@ -44,7 +44,7 @@ from query_core.query_manager import QueryManager
 from search_core.search_instructions import SearchInstructions
 from search_core.search_router import execute
 from security.input_validator import get_validation_summary, validate_query_security
-from security.log_sanitiser import sanitise_error
+from security.log_sanitiser import SanitisedFormatter, sanitise_error
 from security.rate_limiter import (
     check_query_rate_limit,
     get_query_reset_time,
@@ -106,6 +106,12 @@ context_filter = ContextFilter()
 root_logger.addFilter(context_filter)
 for handler in root_logger.handlers:
     handler.addFilter(context_filter)
+    # Redact credentials/tokens in every record, including exception tracebacks.
+    handler.setFormatter(
+        SanitisedFormatter(
+            "%(asctime)s [%(levelname)s] %(name)s [%(category)s] [%(file_key)s]: %(message)s"
+        )
+    )
 
 # Silence noisy libraries
 for n in ("torch", "torch._dynamo", "torch._subclasses.fake_tensor"):
@@ -233,13 +239,6 @@ def initialise_building_cache():
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
-def should_process_query():
-    """Check if we should process a new query."""
-    return "last_processed_query" not in st.session_state or st.session_state.get(
-        "current_query"
-    ) != st.session_state.get("last_processed_query")
-
-
 def handle_chat_input(top_k: int):
     """Handle new chat input from user."""
     query = st.chat_input("Ask me about BMS, FRAs or Maintenance Jobs and Requests...")
@@ -296,13 +295,11 @@ def handle_query_with_manager(query: str, top_k: int):
     with st.chat_message("assistant", avatar=EMOJI_GORILLA):
         with st.spinner("Processing your query..."):
             try:
-                building = extract_building_from_query(query)
-
-                # Process query
+                # Building extraction is left to the manager's BuildingExtractor
+                # preprocessor; extracting here as well doubled the work.
                 result = manager.process_query(
                     query,
                     top_k=top_k,
-                    building_filter=building,
                     history=st.session_state.messages,
                     rolling_summary=st.session_state.summary,
                     user_id=st.session_state.get("user_id", "anonymous"),
@@ -343,8 +340,10 @@ def handle_query_with_manager(query: str, top_k: int):
                         "handler_used": result.handler_used or "Unknown",
                     }
                 )
-                # # Clear processing flag
-                # st.session_state.processing_query = False
+
+                # Keep the rolling summary current so follow-up turns get
+                # conversational context (it feeds process_query above).
+                update_conversation_summary()
 
                 # Debug info - Only show in development mode to prevent information disclosure
                 # Shows system architecture details that could aid attackers
@@ -490,17 +489,21 @@ def main():
     logging.info("%s Building cache init took %.1f s", EMOJI_TIME, time.time() - t0)
 
     if not cache_status["populated"]:
+        # Drop the cached failure so a later rerun retries instead of staying
+        # degraded until the process restarts (e.g. transient Pinecone outage).
+        initialise_building_cache.clear()
         st.warning(
             f"{EMOJI_CAUTION} Building name cache could not be initialised. "
             "Building name detection may be limited to pattern matching."
         )
-    else:
+    elif not st.session_state.get("building_cache_banner_shown"):
         indexes_with_buildings = cache_status.get("indexes_with_buildings", [])
         if indexes_with_buildings:
             st.success(
                 f"✅ Building data loaded from {len(indexes_with_buildings)} index: "
                 f"{', '.join(indexes_with_buildings)}"
             )
+        st.session_state.building_cache_banner_shown = True
 
     render_header()
 
@@ -524,40 +527,6 @@ def main():
 
     # Display last results if they exist
     display_last_results()
-
-
-# Add to main.py
-
-
-def display_system_status():
-    """Show system status in sidebar."""
-    if st.session_state.get("show_system_status", False):
-        with st.sidebar:
-            st.markdown("---")
-            st.markdown("### 🔧 System Status")
-
-            if USE_QUERY_MANAGER and "manager" in st.session_state:
-                manager = st.session_state.manager
-                stats = manager.get_statistics()
-
-                st.metric("Total Queries", stats["total_queries"])
-                st.metric("Avg Time (ms)", f"{stats.get('avg_time_ms', 0):.1f}")
-
-                st.markdown("**By Query Type:**")
-                for qtype, data in stats["query_types"].items():
-                    st.write(f"- {qtype}: {data['count']} queries")
-
-                st.markdown("**Handlers:**")
-                for handler_name, data in stats["handlers"].items():
-                    st.write(f"- {handler_name}: {data['count']} uses")
-
-
-def handle_direct_response(response: str):
-    """Handle direct responses without search."""
-    with st.chat_message("assistant", avatar=EMOJI_GORILLA):
-        safe_markdown(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        update_conversation_summary()
 
 
 def safe_execute(
@@ -765,7 +734,7 @@ Please produce an updated, concise summary that preserves all facts.
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=ANSWER_MODEL,
             messages=[
                 {"role": "system", "content": "You summarise conversations."},
                 {"role": "user", "content": combined_prompt},
@@ -775,9 +744,9 @@ Please produce an updated, concise summary that preserves all facts.
         content = response.choices[0].message.content
         st.session_state.summary = content.strip() if content else ""
 
-    except Exception:
-        # don't break the chat if summarisation fails
-        pass
+    except Exception as e:
+        # Don't break the chat if summarisation fails, but leave a trace.
+        logging.warning("Conversation summary update failed: %s", sanitise_error(e))
 
 
 # ============================================================================

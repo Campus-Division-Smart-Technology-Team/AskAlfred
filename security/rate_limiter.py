@@ -219,6 +219,9 @@ class RedisRateLimiter(RateLimiterBackend):
         if self.lua_increment is None:
             # Lua script for atomic increment with TTL
             # Returns [current_count, is_limited]
+            # NOTE: Lua `false` converts to a Redis nil, which truncates the
+            # returned array — the flag must be returned as 1/0, never as a
+            # boolean, or callers see a single-element reply.
             self.lua_increment = self.redis.register_script("""
                 local key = KEYS[1]
                 local window = tonumber(ARGV[1])
@@ -240,7 +243,7 @@ class RedisRateLimiter(RateLimiterBackend):
                     redis.call('expire', key, window + 10)  -- Expire after window
                 end
 
-                return {current, is_limited}
+                return {current, is_limited and 1 or 0}
             """)
         return self.lua_increment
 

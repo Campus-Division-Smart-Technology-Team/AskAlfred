@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 AUTH_CONTEXT_SESSION_KEY = "auth_context"
 AUTH_FLOW_SESSION_KEY = "auth_code_flow"
 AUTH_ERROR_SESSION_KEY = "auth_error"
+AUTH_PROVIDER_ERROR_MESSAGE = "Microsoft sign-in was not completed. Please try again."
 AUTH_FLOW_CACHE_TTL_SECONDS = 900
 MICROSOFT_SIGN_IN_BUTTON_MAX_WIDTH_PX = 360
 MICROSOFT_LOGO_SVG = (
@@ -281,9 +282,11 @@ def _try_complete_authentication() -> AuthContext | None:
         return None
 
     if params.get("error"):
-        description = params.get("error_description") or params["error"]
-        st.session_state[AUTH_ERROR_SESSION_KEY] = description
-        logger.warning("Authentication callback returned an error: %s", description)
+        st.session_state[AUTH_ERROR_SESSION_KEY] = AUTH_PROVIDER_ERROR_MESSAGE
+        logger.warning(
+            "Authentication callback returned error code: %s",
+            params["error"],
+        )
         _clear_auth_query_params()
         return None
 
@@ -325,9 +328,11 @@ def _try_complete_authentication() -> AuthContext | None:
         return None
 
     if result.get("error"):
-        description = result.get("error_description") or result.get("error")
-        st.session_state[AUTH_ERROR_SESSION_KEY] = str(description)
-        logger.warning("Authentication failed: %s", description)
+        st.session_state[AUTH_ERROR_SESSION_KEY] = AUTH_PROVIDER_ERROR_MESSAGE
+        logger.warning(
+            "Authentication failed with error code: %s",
+            result["error"],
+        )
         return None
 
     id_token_claims = result.get("id_token_claims") or {}

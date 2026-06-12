@@ -5,6 +5,7 @@ Query Manager - Centralised query orchestration for AskAlfred.
 
 """
 
+import copy
 import json
 import logging
 import time
@@ -15,6 +16,7 @@ from config import (
     QUERY_CONF_THRESHOLD,
     QUERY_FOLLOWUP_MAX_TOKENS,
     QUERY_FOLLOWUP_ML_CONF_THRESHOLD,
+    QUERY_MANAGER_CONFIG,
     QUERY_RULE_OVERRIDE_THRESHOLD,
 )
 from core.session_manager import SessionManager
@@ -126,9 +128,13 @@ class QueryManager:
         # Preprocessors
         self.preprocessors = self._initialise_preprocessors()
 
-        # Cache
-        self.cache_enabled = True
-        self.cache: dict[str, QueryResult] = {}
+        # Cache (config-driven; entries are (stored_at, result) pairs)
+        self.cache_enabled = bool(QUERY_MANAGER_CONFIG.get("enable_caching", False))
+        self.cache_ttl_seconds = float(
+            QUERY_MANAGER_CONFIG.get("cache_ttl_seconds", 300)
+        )
+        self.cache_max_entries = 128
+        self.cache: dict[str, tuple[float, QueryResult]] = {}
 
         # Stats
         self.stats = {
@@ -304,7 +310,7 @@ class QueryManager:
         Returns:
             QueryResult
         """
-        self.logger.warning("RAW QUERY: %s", query)
+        self.logger.debug("Raw query received (%d chars)", len(query or ""))
 
         start_time = time.time()  # timing for this request
 
@@ -372,10 +378,11 @@ class QueryManager:
         # Cache check (must happen *after* preprocessors + follow-up inheritance,
         # so the cache key includes the correct building scope)
         cache_key = self._make_cache_key(context)
-        if self.cache_enabled and cache_key in self.cache:
+        cached = self._get_cached_result(cache_key)
+        if cached is not None:
             self.stats["cached_queries"] += 1
 
-            query_result = self.cache[cache_key]
+            query_result = cached
 
             # persist context snapshot
             SessionManager.set_last_query_context(context)
@@ -396,7 +403,7 @@ class QueryManager:
             query_result.processing_time_ms = elapsed_ms
             return query_result
 
-        self.logger.warning("FINAL QUERY BEFORE ROUTING: %r", context.query)
+        self.logger.debug("Final query before routing: %r", context.query)
 
         # ---------------------------------------------------
         # Routing
@@ -429,13 +436,13 @@ class QueryManager:
 
         # Cache result
         if self.cache_enabled:
-            self.cache[cache_key] = query_result
+            self._store_cached_result(cache_key, query_result)
 
         # ---------------------------------------------------
         # 5. CONVERSATIONAL MEMORY PERSISTENCE
         # ---------------------------------------------------
-        self.logger.warning(
-            "MEMORY PERSISTENCE CHECK: context.building is %r", context.building
+        self.logger.debug(
+            "Memory persistence check: context.building is %r", context.building
         )
         try:
             # Save compact QueryContext into session memory
@@ -701,6 +708,25 @@ class QueryManager:
     # =========================================================================
     # Cache + stats helpers
     # =========================================================================
+
+    def _get_cached_result(self, cache_key: str) -> Optional[QueryResult]:
+        """Return a live cache entry, expiring it if the TTL has lapsed."""
+        if not self.cache_enabled:
+            return None
+        entry = self.cache.get(cache_key)
+        if entry is None:
+            return None
+        stored_at, result = entry
+        if time.time() - stored_at > self.cache_ttl_seconds:
+            self.cache.pop(cache_key, None)
+            return None
+        return copy.deepcopy(result)
+
+    def _store_cached_result(self, cache_key: str, result: QueryResult) -> None:
+        """Insert into the cache, evicting the oldest entry when full."""
+        if len(self.cache) >= self.cache_max_entries:
+            self.cache.pop(next(iter(self.cache)))
+        self.cache[cache_key] = (time.time(), copy.deepcopy(result))
 
     def _make_cache_key(self, context: QueryContext) -> str:
         """

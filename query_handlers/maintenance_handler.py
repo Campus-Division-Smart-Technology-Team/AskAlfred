@@ -41,19 +41,14 @@ class MaintenanceHandler(BaseQueryHandler):
 
         q = context.query.strip().lower()
 
-        if is_maintenance_query(q):
-            return True
-
-        # Avoid conflicts with other handlers
+        # Exclusions must run first: "rank buildings by maintenance backlog"
+        # mentions maintenance but belongs to the ranking handler.
         if is_ranking_query(q):
             return False
         if is_property_condition_query(q):
             return False
-        # if is_counting_query(q):
-        #     return False
 
-        # Use the precise logic from counting_queries
-        return False
+        return is_maintenance_query(q)
 
     def _as_name(self, building):
         if not building:

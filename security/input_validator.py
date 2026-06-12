@@ -18,18 +18,27 @@ from typing import Optional
 # CONSTANTS
 # ===========================================================================
 
-# Prompt injection attack patterns
+# Prompt injection attack patterns.
+# Keep these narrow: this app's domain vocabulary (BMS "operating
+# instructions", damper "override", FRA "roles") overlaps with naive
+# injection keywords, so each pattern requires injection-specific context
+# rather than a bare keyword.
 INJECTION_PATTERNS = [
-    # Ignore/override patterns
-    r"(?i)(ignore\s+previous|disregard|forget|override|clear\s+context)",
-    # System prompt reference patterns
-    r"(?i)(system\s+prompt|instructions|you\s+are|you\s+are\s+a|role\s*[=:]|persona\s*[=:])",
-    # Jailbreak patterns
-    r"(?i)(as\s+an\s+ai|as\s+an\s+assistant|pretend|act\s+like|behave\s+as)",
+    # Ignore/override patterns ("ignore previous instructions", "disregard the above")
+    r"(?i)\b(ignore|disregard|forget|override)\s+(all\s+|any\s+)?(previous|prior|above|earlier|your)\b",
+    r"(?i)\bclear\s+(the\s+)?context\b",
+    # System prompt / instruction reference patterns
+    r"(?i)(system\s+prompt|your\s+instructions|initial\s+instructions|original\s+instructions)",
+    r"(?i)\byou\s+are\s+(now\s+)?(a|an)\b",
+    r"(?i)\b(role|persona)\s*[=:]",
+    # Jailbreak patterns ("behave as" requires an article/if so BMS queries
+    # like "how does the AHU behave as temperature drops" pass)
+    r"(?i)(as\s+an\s+ai|as\s+an\s+assistant|pretend|act\s+like|behave\s+as\s+(if|a|an|though)\b)",
     # Output manipulation
     r"(?i)(output\s+only|response\s+must|format\s+as|reply\s+with)",
     # Constraint breaking
-    r"(?i)(ignore\s+constraints|no\s+constraints|bypass|circumvent)",
+    r"(?i)\b(ignore|no)\s+constraints\b",
+    r"(?i)\b(bypass|circumvent)\s+(all\s+|any\s+)?(filters?|restrictions?|constraints?|safety|rules|safeguards?)\b",
     # Hidden instructions
     r"(?i)(hidden\s+message|secret\s+instruction|true\s+purpose)",
 ]
@@ -46,13 +55,12 @@ SPECIAL_CHAR_RATIO_LIMIT = 0.3  # Max 30% special characters
 SUSPICIOUS_CHAR_RATIO_LIMIT = 0.1  # Max 10% suspicious characters
 REPEATED_CHAR_LIMIT = 5  # Max 5 repeated characters in a row
 
-# Rate limiting
-RATE_LIMIT_PER_MINUTE = 30  # Default: 30 queries per minute per user
-RATE_LIMIT_WINDOW_SECONDS = 60
-
 # Pinecone filter operators - allowed for safe filtering
 ALLOWED_FILTER_OPERATORS = {"$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"}
-DANGEROUS_FILTER_KEYWORDS = {"$where", "$regex", "$text", "javascript", "eval"}
+ALLOWED_FILTER_COMBINATORS = {"$and", "$or"}
+# Keyword tokens stripped out of string filter *values*; $-prefixed operators
+# ($where, $regex, ...) are enforced at the key level instead.
+_DANGEROUS_VALUE_KEYWORDS = ("javascript", "eval", "exec")
 
 # ===========================================================================
 # LOGGING
@@ -221,9 +229,14 @@ def validate_query_security(
 # ===========================================================================
 
 
-def sanitise_filter_value(value: str) -> str:
+def sanitise_filter_value(value):
     """
-    Sanitise filter value to prevent NoSQL injection in Pinecone filters.
+    Sanitise a filter value for use in Pinecone metadata conditions.
+
+    Pinecone conditions are exact-match, not regex, so values must NOT be
+    escaped — escaping corrupts legitimate values (e.g. building names with
+    spaces or hyphens). Only known-dangerous keyword tokens are stripped from
+    strings; non-string scalars pass through with their type preserved.
 
     Args:
         value: Filter value to sanitise
@@ -232,15 +245,11 @@ def sanitise_filter_value(value: str) -> str:
         Sanitised value safe for use in Pinecone filters
     """
     if not isinstance(value, str):
-        return str(value)
+        return value
 
-    # Remove any dangerous characters/operators
     sanitised = value
-    for keyword in DANGEROUS_FILTER_KEYWORDS:
+    for keyword in _DANGEROUS_VALUE_KEYWORDS:
         sanitised = re.sub(rf"\b{keyword}\b", "", sanitised, flags=re.IGNORECASE)
-
-    # Escape special regex characters
-    sanitised = re.escape(sanitised)
 
     return sanitised
 
@@ -262,6 +271,11 @@ def sanitise_pinecone_filter(filter_dict: dict) -> dict:
     """
     Sanitise Pinecone filter dictionary to prevent injection attacks.
 
+    Recurses through `$and`/`$or` combinators, drops disallowed operators and
+    dangerous keys, and sanitises string values — while preserving the filter
+    structure, list values, and scalar types so the result remains a valid
+    Pinecone filter.
+
     Args:
         filter_dict: Pinecone filter dictionary
 
@@ -271,28 +285,50 @@ def sanitise_pinecone_filter(filter_dict: dict) -> dict:
     if not isinstance(filter_dict, dict):
         return {}
 
-    sanitised = {}
+    sanitised: dict = {}
 
     for key, value in filter_dict.items():
         # Check for dangerous key patterns
-        if any(kw in key.lower() for kw in ("javascript", "eval", "exec")):
+        if any(kw in key.lower() for kw in _DANGEROUS_VALUE_KEYWORDS):
             logger.warning("Dangerous filter key detected: %s", key)
             continue
 
+        # Recurse into logical combinators, preserving their clause lists
+        if key in ALLOWED_FILTER_COMBINATORS:
+            if isinstance(value, list):
+                clauses = [
+                    sanitise_pinecone_filter(clause)
+                    for clause in value
+                    if isinstance(clause, dict)
+                ]
+                clauses = [clause for clause in clauses if clause]
+                if clauses:
+                    sanitised[key] = clauses
+            continue
+
+        # Any other $-prefixed key is an operator in the wrong position
+        if key.startswith("$"):
+            logger.warning("Invalid filter operator at top level: %s", key)
+            continue
+
         # Sanitise based on value type
-        if isinstance(value, str):
-            sanitised[key] = sanitise_filter_value(value)
-        elif isinstance(value, dict):
-            # Validate operators in nested filters
+        if isinstance(value, dict):
+            # Validate operators in nested conditions
+            cleaned_ops: dict = {}
             for op, val in value.items():
                 if not validate_filter_operator(op):
                     logger.warning("Invalid filter operator: %s", op)
                     continue
-                sanitised.setdefault(key, {})[op] = sanitise_filter_value(str(val))
-        elif isinstance(value, (int, float, bool)):
-            sanitised[key] = value
+                if isinstance(val, (list, tuple)):
+                    cleaned_ops[op] = [sanitise_filter_value(v) for v in val]
+                else:
+                    cleaned_ops[op] = sanitise_filter_value(val)
+            if cleaned_ops:
+                sanitised[key] = cleaned_ops
         elif isinstance(value, list):
-            sanitised[key] = [sanitise_filter_value(str(v)) for v in value]
+            sanitised[key] = [sanitise_filter_value(v) for v in value]
+        else:
+            sanitised[key] = sanitise_filter_value(value)
 
     return sanitised
 
@@ -338,24 +374,6 @@ def validate_building_name(building_name: str) -> tuple[bool, Optional[str]]:
 # ===========================================================================
 
 
-def escape_markdown_special_chars(text: str) -> str:
-    """
-    Escape special markdown characters to prevent injection.
-
-    Args:
-        text: Text to escape
-
-    Returns:
-        Escaped text safe for markdown rendering
-    """
-    # Escape markdown special characters
-    escape_chars = r"\`*_{}[]()#+-.!"
-    result = text
-    for char in escape_chars:
-        result = result.replace(char, f"\\{char}")
-    return result
-
-
 def is_safe_for_markdown(text: str) -> bool:
     """
     Check if text is safe to render in markdown without sanitization.
@@ -379,80 +397,6 @@ def is_safe_for_markdown(text: str) -> bool:
         return False
 
     return True
-
-
-# ===========================================================================
-# RATE LIMITING SUPPORT
-# ===========================================================================
-
-
-class RateLimitChecker:
-    """
-    Simple in-memory rate limiter for queries.
-
-    For production, use Redis-based rate limiting.
-    """
-
-    def __init__(self):
-        self._query_counts = {}  # user_id -> [(timestamp, count)]
-        self._lock = {}
-
-    def is_rate_limited(
-        self, user_id: str, max_calls: int = RATE_LIMIT_PER_MINUTE
-    ) -> bool:
-        """
-        Check if user has exceeded rate limit.
-
-        Args:
-            user_id: Unique user identifier
-            max_calls: Max calls allowed per minute
-
-        Returns:
-            True if rate limited, False otherwise
-        """
-        import time
-
-        current_time = time.time()
-        window_start = current_time - RATE_LIMIT_WINDOW_SECONDS
-
-        if user_id not in self._query_counts:
-            self._query_counts[user_id] = []
-
-        # Remove old entries
-        self._query_counts[user_id] = [
-            ts for ts in self._query_counts[user_id] if ts > window_start
-        ]
-
-        # Check if exceeded
-        if len(self._query_counts[user_id]) >= max_calls:
-            logger.warning(
-                "Rate limit exceeded for user %s: %d calls in %d seconds",
-                user_id,
-                len(self._query_counts[user_id]),
-                RATE_LIMIT_WINDOW_SECONDS,
-            )
-            return True
-
-        # Record this query
-        self._query_counts[user_id].append(current_time)
-        return False
-
-
-# Global rate limiter instance
-_rate_limiter = RateLimitChecker()
-
-
-def check_user_rate_limit(user_id: str) -> bool:
-    """
-    Check if user has exceeded rate limit.
-
-    Args:
-        user_id: Unique user identifier
-
-    Returns:
-        True if NOT rate limited (query allowed), False if rate limited
-    """
-    return not _rate_limiter.is_rate_limited(user_id, RATE_LIMIT_PER_MINUTE)
 
 
 # ===========================================================================

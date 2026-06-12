@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from auth.access_control import combine_pinecone_filters, filter_authorized_matches
@@ -137,6 +138,10 @@ def get_doc_type(hit: dict[str, Any]) -> str:
 # ============================================================================
 
 
+# Cap on concurrent per-namespace Pinecone queries within one index search.
+_NAMESPACE_QUERY_MAX_WORKERS = 6
+
+
 def search_one_index(
     idx_name: str,
     query: str,
@@ -144,9 +149,15 @@ def search_one_index(
     embed_model: Optional[str] = None,
     building_filter: Optional[str] = None,
     access_filter: Optional[dict[str, Any]] = None,
+    query_vector: Optional[list[float]] = None,
 ) -> list[dict[str, Any]]:
     """
     Search a single index with building-aware filtering.
+
+    Namespaces are queried concurrently with one shared query embedding.
+    Callers issuing several searches for the same query (e.g. staged
+    building-filtered then unfiltered passes) should embed once and pass
+    `query_vector` to avoid repeated embedding API calls.
     """
     try:
         idx = open_index(idx_name)
@@ -167,40 +178,35 @@ def search_one_index(
     ), f"No embedding model configured for index {idx_name}"
 
     namespaces = _namespaces_to_search(idx, idx_name)
-    all_hits = []
 
     # Create building filter if specified
     building_metadata_filter = None
     if building_filter:
         building_metadata_filter = create_building_metadata_filter(building_filter)
-        logging.info("🏢 Created metadata filter for building: %s", building_filter)
+        logging.debug("🏢 Created metadata filter for building: %s", building_filter)
 
     metadata_filter = combine_pinecone_filters(access_filter, building_metadata_filter)
     if access_filter:
-        logging.info("Applied retrieval access filter keys: %s", sorted(access_filter))
+        logging.debug("Applied retrieval access filter keys: %s", sorted(access_filter))
 
     # Embed the query once; the same vector is valid for every namespace.
-    try:
-        query_vector = embed_texts([query], embed_model)[0]
-    except Exception as e:  # pylint: disable=broad-except
-        logging.warning("Failed to embed query for index '%s': %s", idx_name, e)
-        return []
-
-    for ns in namespaces:
-        # ADD LOGGING HERE - BEFORE THE TRY BLOCK
-        if ns is None:
-            logging.debug("Querying index '%s' in default namespace", idx_name)
-        else:
-            logging.debug("Querying index '%s' in namespace: %s", idx_name, ns)
-
+    if query_vector is None:
         try:
-            # Now embed_model is guaranteed to be a string
+            query_vector = embed_texts([query], embed_model)[0]
+        except Exception as e:  # pylint: disable=broad-except
+            logging.warning("Failed to embed query for index '%s': %s", idx_name, e)
+            return []
+
+    def _query_namespace(ns: Optional[str]) -> list[dict[str, Any]]:
+        ns_display = "(default)" if ns is None else ns
+        logging.debug("Querying index '%s' in namespace: %s", idx_name, ns_display)
+        try:
             raw = vector_query(
                 idx,
                 namespace=ns,
                 query=query,
                 k=k,
-                embed_model=embed_model,  # No longer None
+                embed_model=embed_model,
                 metadata_filter=metadata_filter,
                 query_vector=query_vector,
             )
@@ -219,16 +225,26 @@ def search_one_index(
                 h["index"] = idx_name
                 h["namespace"] = ns
 
-            all_hits.extend(hits)
-
+            return hits
         except Exception as e:  # pylint: disable=broad-except
-            ns_display = "(default)" if ns is None else ns
             logging.warning(
                 "Search failed for index='%s', namespace='%s': %s",
                 idx_name,
                 ns_display,
                 e,
             )
+            return []
+
+    # Each namespace query is an independent network round-trip; running them
+    # serially used to dominate query latency once several namespaces existed.
+    all_hits: list[dict[str, Any]] = []
+    if len(namespaces) == 1:
+        all_hits.extend(_query_namespace(namespaces[0]))
+    else:
+        max_workers = min(len(namespaces), _NAMESPACE_QUERY_MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for hits in executor.map(_query_namespace, namespaces):
+                all_hits.extend(hits)
 
     return all_hits
 
@@ -312,7 +328,7 @@ def apply_occupancy_capacity_boost(
             result["boosted_score"] = base_score * boost_factor
             boosted_count += 1
 
-    logging.info(
+    logging.debug(
         "Applied occupancy/capacity boost to %d result(s) for query '%s'",
         boosted_count,
         query,

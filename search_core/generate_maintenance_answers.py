@@ -46,7 +46,7 @@ def generate_maintenance_answer(
     - Diagnostic logging to identify filtering issues
     - Pre-validation checks
     """
-    logging.info("%s MAINTENANCE QUERY: '%s'", EMOJI_SEARCH, query)
+    logging.debug("%s Maintenance query received (%d chars)", EMOJI_SEARCH, len(query))
 
     # Ensure cache is ready
     BuildingCacheManager.ensure_initialised()
@@ -86,7 +86,6 @@ def generate_maintenance_answer(
         building = building_override
 
     logging.info("\n🔧 MAINTENANCE QUERY ANALYSIS")
-    logging.info("  Query: %s", query)
     logging.info("  Building: %s", building)
     logging.info("  Category: %s", category)
     logging.info("  Status: %s", status)

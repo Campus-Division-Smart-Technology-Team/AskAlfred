@@ -28,9 +28,9 @@ class BaseQueryHandler(ABC):
 
     def _log_handling(self, context):
         """Log that this handler is processing query."""
-        self.logger.info(
-            "Handling query: '%s...' (type: %s)",
-            context.query[:50],
+        self.logger.debug(
+            "Handling query (%d chars, type: %s)",
+            len(context.query),
             self.query_type.value if self.query_type else "unknown",
         )
 

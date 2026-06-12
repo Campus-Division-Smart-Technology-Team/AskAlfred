@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 from security.input_validator import (
-    check_user_rate_limit,
     count_special_characters,
     get_validation_summary,
     has_excessive_special_chars,
@@ -22,6 +21,7 @@ from security.input_validator import (
     validate_building_name,
     validate_query_security,
 )
+from security.rate_limiter import check_query_rate_limit
 
 # Ensure repo root is on sys.path so tests can import top-level modules
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +83,18 @@ class TestInjectionDetection:
             "How many buildings have fire wardens?",
             "List all BMS systems",
             "Tell me about the HVAC configuration",
+        ]
+        for query in queries:
+            assert not is_injection_attempt(query), f"Incorrectly flagged: {query}"
+
+    def test_domain_vocabulary_not_flagged(self):
+        """Regression: BMS/FRA domain terms must not trip injection detection."""
+        queries = [
+            "show me the BMS operating instructions for Senate House",
+            "what instructions are in the FRA for evacuations",
+            "can the BMS override the schedule in Senate House",
+            "how does the AHU behave as outside temperature drops",
+            "show the bypass damper configuration",
         ]
         for query in queries:
             assert not is_injection_attempt(query), f"Incorrectly flagged: {query}"
@@ -258,6 +270,38 @@ class TestPineconeFilterSanitization:
         assert result is not None
         assert isinstance(result, dict)
 
+    def test_values_are_not_escaped(self):
+        """Regression: exact-match values must survive sanitisation unchanged."""
+        filter_dict = {
+            "canonical_building_name": {"$eq": "Senate House"},
+            "building_name": {"$in": ["93-95 Woodland Road", "Senate House"]},
+            "risk_level": {"$gt": 2},
+        }
+        result = sanitise_pinecone_filter(filter_dict)
+        assert result == filter_dict
+
+    def test_or_combinator_structure_preserved(self):
+        """Regression: $or clause dicts must not be stringified."""
+        filter_dict = {
+            "$or": [
+                {"canonical_building_name": {"$in": ["Senate House"]}},
+                {"building_name": {"$in": ["Senate House"]}},
+            ]
+        }
+        result = sanitise_pinecone_filter(filter_dict)
+        assert result == filter_dict
+
+    def test_and_combinator_with_access_filter(self):
+        """Regression: tenant + roles access filters must round-trip intact."""
+        filter_dict = {
+            "$and": [
+                {"tenant_id": {"$eq": "tenant-123"}},
+                {"allowed_roles": {"$in": ["pilot_user"]}},
+            ]
+        }
+        result = sanitise_pinecone_filter(filter_dict)
+        assert result == filter_dict
+
 
 class TestBuildingNameValidation:
     """Test building name validation."""
@@ -302,9 +346,9 @@ class TestRateLimitIntegration:
     """Test rate limiting integration with validation."""
 
     def test_rate_limit_check_exists(self):
-        """Test that rate limiting is available from input_validator."""
+        """Test that rate limiting is available from the rate limiter module."""
         # If function exists, rate limiting support is available
-        assert callable(check_user_rate_limit)
+        assert callable(check_query_rate_limit)
 
 
 class TestComprehensiveValidation:
@@ -388,5 +432,5 @@ class TestEdgeCases:
     def test_rate_limit_check_callable(self):
         """Test that rate limit checking is available."""
         # Check that the function is callable and works
-        result = check_user_rate_limit("test_user_123")
+        result = check_query_rate_limit("test_user_123")
         assert isinstance(result, bool)

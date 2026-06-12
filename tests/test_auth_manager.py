@@ -104,3 +104,23 @@ def test_get_or_create_auth_flow_builds_flow_when_secret_present(monkeypatch):
 
     assert flow == fake_flow
     assert fake_streamlit.session_state[auth_manager.AUTH_FLOW_SESSION_KEY] == fake_flow
+
+
+def test_auth_callback_error_is_not_exposed_to_ui(monkeypatch, caplog):
+    provider_error = "AADSTS50011 secret-token=super-secret correlation-id=abc"
+    fake_streamlit = SimpleNamespace(session_state={})
+
+    monkeypatch.setattr(auth_manager, "st", fake_streamlit)
+    monkeypatch.setattr(
+        auth_manager,
+        "_get_query_params",
+        lambda: {"error": "invalid_request", "error_description": provider_error},
+    )
+    monkeypatch.setattr(auth_manager, "_clear_auth_query_params", lambda: None)
+
+    assert auth_manager._try_complete_authentication() is None
+    assert (
+        fake_streamlit.session_state[auth_manager.AUTH_ERROR_SESSION_KEY]
+        == auth_manager.AUTH_PROVIDER_ERROR_MESSAGE
+    )
+    assert "super-secret" not in caplog.text

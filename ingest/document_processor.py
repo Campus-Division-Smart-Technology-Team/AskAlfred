@@ -139,7 +139,9 @@ def make_file_id(
 
 def _doc_sub_id(doc_key: str) -> str:
     """Build a stable compact identifier for per-building/per-row doc keys."""
-    return hashlib.sha1(doc_key.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1(
+        doc_key.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:12]
 
 
 def make_id(file_id: str, doc_key: str, chunk_idx: int) -> str:

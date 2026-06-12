@@ -6,22 +6,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from config import (
-    SESSION_HIGH_CONFIDENCE_THRESHOLD,
-    SESSION_IMPORTANCE_BASELINE,
-    SESSION_IMPORTANCE_BUILDING_BONUS,
-    SESSION_IMPORTANCE_CONFIDENCE_BONUS,
-    SESSION_IMPORTANCE_ERROR_BONUS,
-    SESSION_IMPORTANCE_INTENT_BONUS,
-    SESSION_IMPORTANCE_LONG_MESSAGE_BONUS,
-    SESSION_IMPORTANCE_USER_BONUS,
-    SESSION_IMPORTANT_KEEP_RATIO,
-    SESSION_IMPORTANT_MIN_KEEP,
-    SESSION_LONG_MESSAGE_LENGTH,
-    SESSION_SUMMARY_MAX_KEY_POINTS,
-    SESSION_SUMMARY_PREVIEW_LEN,
-)
-
 try:
     import streamlit as st
 except ImportError:
@@ -142,10 +126,12 @@ class SessionManager:
     def add_user_message(text: str, metadata: Optional[dict[str, Any]] = None):
         with _get_conversation_state() as state:
             state.messages.append(
-                ChatMessagerole="user",
-                content=text,
-                metadata=metadata or {},
-                ts=time.time(),
+                ChatMessage(
+                    role="user",
+                    content=text,
+                    metadata=metadata or {},
+                    ts=time.time(),
+                )
             )
             SessionManager._update_rolling_summary(state)
 
@@ -153,13 +139,14 @@ class SessionManager:
     def add_assistant_message(text: str, metadata: Optional[dict[str, Any]] = None):
         with _get_conversation_state() as state:
             state.messages.append(
-                ChatMessagerole="assistant",
-                content=text,
-                metadata=metadata or {},
-                ts=time.time(),
+                ChatMessage(
+                    role="assistant",
+                    content=text,
+                    metadata=metadata or {},
+                    ts=time.time(),
+                )
             )
             SessionManager._update_rolling_summary(state)
-        SessionManager._update_rolling_summary(state)
 
     @staticmethod
     def get_context_window(max_turns: Optional[int] = None) -> list[dict[str, Any]]:
@@ -404,210 +391,6 @@ class SessionManager:
 
     # ---------------------------------------------------------
     # Intent tracking (required by QueryManager)
-    # ---------------------------------------------------------
-
-    @staticmethod
-    def set_last_intent(intent, confidence: float | None = None):
-        """
-        Store the last predicted intent (as string) and optional confidence.
-        """
-        with _get_conversation_state() as state:
-            # intent may be a QueryType enum or string
-            state.last_intent = intent.value if hasattr(intent, "value") else intent
-            state.last_intent_confidence = confidence
-
-    @staticmethod
-    def get_last_intent():
-        """
-        Returns a tuple of (intent, confidence), both may be None.
-        """
-        with _get_conversation_state() as state:
-            return state.last_intent, state.last_intent_confidence
-
-    # Streamlit-specific message tracking
-    @staticmethod
-    def sync_to_streamlit():
-        """Sync internal messages to Streamlit's session_state.messages"""
-        if st is not None:
-            with _get_conversation_state() as state:
-                st.session_state.messages = [m.to_dict() for m in state.messages]
-
-    @staticmethod
-    def sync_from_streamlit():
-        """Sync Streamlit's messages back to internal state"""
-        if st is not None and "messages" in st.session_state:
-            with _get_conversation_state() as state:
-                state.messages = [
-                    ChatMessage(**msg) for msg in st.session_state.messages
-                ]
-
-
-# Alternative: More sophisticated approach with importance scoring
-# ================================================================
-
-
-class SessionManagerAdvanced:
-    """
-    EXPERIMENTAL: Advanced version with importance-based message retention.
-
-    This version scores message importance before summarising, keeping more
-    important messages even if they're older. Use SessionManager for
-    production; this class is for testing enhanced memory strategies.
-
-    Keeps more important messages even if they're older.
-    """
-
-    # --- Helper Constants for Readability ---
-    # Thresholds for importance scoring
-    _LONG_MESSAGE_LENGTH = SESSION_LONG_MESSAGE_LENGTH
-    _HIGH_CONFIDENCE_THRESHOLD = SESSION_HIGH_CONFIDENCE_THRESHOLD
-
-    # Summary tuning parameters
-    _DEFAULT_SUMMARY_PREVIEW_LEN = SESSION_SUMMARY_PREVIEW_LEN
-    _SUMMARY_MAX_KEY_POINTS = SESSION_SUMMARY_MAX_KEY_POINTS
-    # Keep 1/5th of important messages
-    _IMPORTANT_MESSAGES_KEEP_RATIO = SESSION_IMPORTANT_KEEP_RATIO
-
-    @staticmethod
-    def _score_message_importance(msg: ChatMessage) -> float:
-        """
-        Score a message's importance (0-1) to decide if it should be kept.
-        Higher scores mean more important messages.
-        """
-        score = SESSION_IMPORTANCE_BASELINE  # baseline
-
-        # User questions are generally important
-        if msg.role == "user":
-            score += SESSION_IMPORTANCE_USER_BONUS
-
-        # Metadata indicates the message was significant
-        if msg.metadata:
-            # Intent classification suggests structured query
-            if msg.metadata.get("intent") or msg.metadata.get("query_type"):
-                score += SESSION_IMPORTANCE_INTENT_BONUS
-
-            # Building mentioned = specific context to preserve
-            if msg.metadata.get("building"):
-                score += SESSION_IMPORTANCE_BUILDING_BONUS
-
-            # High confidence predictions are reliable
-            confidence = msg.metadata.get("ml_intent_confidence", 0)
-            if confidence > SessionManagerAdvanced._HIGH_CONFIDENCE_THRESHOLD:
-                score += SESSION_IMPORTANCE_CONFIDENCE_BONUS
-
-            # Error states should be remembered
-            if msg.metadata.get("error") or msg.metadata.get("warning"):
-                score += SESSION_IMPORTANCE_ERROR_BONUS
-
-        # Long messages might have more information
-        content_length = len(msg.content or "")
-        if content_length > SessionManagerAdvanced._LONG_MESSAGE_LENGTH:
-            score += SESSION_IMPORTANCE_LONG_MESSAGE_BONUS
-
-        return min(score, 1.0)  # Cap at 1.0
-
-    @staticmethod
-    def _update_rolling_summary_advanced(state: ConversationState):
-        """
-        Importance-based rolling summary:
-        - Always keep last N messages
-        - Score older messages by importance
-        - Summarize low-importance messages
-        - Keep high-importance messages longer
-        """
-        if len(state.messages) <= state.max_messages_before_summary:
-            return
-
-        keep_recent = state.summary_keep_recent
-        recent_messages = state.messages[-keep_recent:]
-        old_messages = state.messages[:-keep_recent]
-
-        # Score all old messages
-        scored_messages = [
-            (msg, SessionManagerAdvanced._score_message_importance(msg))
-            for msg in old_messages
-        ]
-
-        # Sort by importance (descending)
-        scored_messages.sort(key=lambda x: x[1], reverse=True)
-
-        # Keep top N% of important messages, summarize the rest
-        keep_count = max(
-            SESSION_IMPORTANT_MIN_KEEP,
-            len(scored_messages)
-            // SessionManagerAdvanced._IMPORTANT_MESSAGES_KEEP_RATIO,
-        )
-        messages_to_keep_full = [msg for msg, score in scored_messages[:keep_count]]
-        messages_to_summarize = [msg for msg, score in scored_messages[keep_count:]]
-
-        # Create summary of less important messages
-        key_points = []
-        preview_len = SessionManagerAdvanced._DEFAULT_SUMMARY_PREVIEW_LEN
-
-        for msg in messages_to_summarize:
-            if msg.role == "user":
-                preview = (msg.content or "")[:preview_len]
-                key_points.append(f"U: {preview}...")
-            elif msg.role == "assistant":
-                intent = ""
-                if msg.metadata:
-                    intent = msg.metadata.get("intent", "")
-                    if intent:
-                        intent = f"[{intent}]"
-                preview = (msg.content or "")[:preview_len]
-                key_points.append(f"A: {preview}...{intent}")
-
-        max_points = SessionManagerAdvanced._SUMMARY_MAX_KEY_POINTS
-        state.rolling_summary = " | ".join(
-            key_points[-max_points:]
-        )  # Last 15 key points
-
-        # Reconstruct messages: important old + recent
-        state.messages = messages_to_keep_full + recent_messages
-
-    # ---------------------------------------------------------
-    # QueryContext tracking (required by QueryManager)
-    # Refactored to use the context manager
-    # ---------------------------------------------------------
-
-    @staticmethod
-    def set_last_query_context(context):
-        """
-        Store a lightweight representation of the last QueryContext.
-        Must be JSON-serializable for Streamlit.
-        """
-        with _get_conversation_state() as state:
-            # Convert QueryContext to a clean dict
-            compact = {
-                "query": context.query,
-                "final_query": context.query,
-                "building": context.building,
-                "buildings": context.buildings,
-                "business_terms": context.business_terms,
-                "document_type": context.document_type,
-                "complexity": context.complexity,
-                "corrected_query": context.corrected_query,
-                "created_at": context.created_at,
-                "predicted_intent": (
-                    context.predicted_intent.value if context.predicted_intent else None
-                ),
-                "ml_intent_confidence": context.ml_intent_confidence,
-            }
-
-            state.last_query_context = compact
-
-    @staticmethod
-    def get_last_query_context():
-        """
-        Return the compact context dict previously stored,
-        or None if no previous query exists.
-        """
-        with _get_conversation_state() as state:
-            return state.last_query_context
-
-    # ---------------------------------------------------------
-    # Intent tracking (required by QueryManager)
-    # Refactored to use the context manager
     # ---------------------------------------------------------
 
     @staticmethod

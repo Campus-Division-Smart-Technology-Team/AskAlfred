@@ -25,7 +25,13 @@ from building import (
     normalise_building_name,
     sanitise_building_candidate,
 )
-from config import TARGET_INDEXES, _route_namespace, get_display_namespace, normalise_ns
+from config import (
+    BUILDING_FILTER_FIELDS,
+    TARGET_INDEXES,
+    _route_namespace,
+    get_display_namespace,
+    normalise_ns,
+)
 from core.pinecone_utils import open_index, query_all_chunks
 from domain.maintenance_utils import _plural
 from search_core.generate_maintenance_answers import generate_maintenance_answer
@@ -866,8 +872,7 @@ def diagnose_maintenance_namespaces(
 
 def create_building_filter(building_name: str) -> dict[str, Any]:
     """
-    Create a Pinecone filter for a building name, checking both
-    canonical_building_name and building_name fields.
+    Create a Pinecone filter across all configured building-name fields.
 
     Validates and sanitizes building name to prevent injection attacks.
     """
@@ -886,14 +891,7 @@ def create_building_filter(building_name: str) -> dict[str, Any]:
     candidates = [raw] if raw == norm else [raw, norm]
 
     filter_dict = {
-        "$or": [
-            {"canonical_building_name": {"$in": candidates}},
-            {"building_name": {"$in": candidates}},
-            # Optional: if you ingest aliases as a list, this helps a lot
-            {"building_aliases": {"$in": candidates}},
-            # Optional: if Planon name is stored under this field in metadata
-            {"UsrFRACondensedPropertyName": {"$in": candidates}},
-        ]
+        "$or": [{field: {"$in": candidates}} for field in BUILDING_FILTER_FIELDS]
     }
 
     # Sanitize the complete filter to ensure no injection attacks
@@ -1064,8 +1062,8 @@ def generate_ranking_answer(
     Generate an answer for building ranking queries (by area).
     Works with rank_buildings_by_area() structured output.
     """
-    logging.info(
-        "%s generate_ranking_answer() called with query: '%s'", EMOJI_INIT, query
+    logging.debug(
+        "%s generate_ranking_answer() called (%d chars)", EMOJI_INIT, len(query)
     )
     q = query.lower()
 

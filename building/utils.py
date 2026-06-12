@@ -24,9 +24,13 @@ import logging
 import re
 import threading
 from difflib import SequenceMatcher, get_close_matches
+from functools import lru_cache
 from typing import Any, Optional
 
 from config import (
+    BUILDING_CANONICAL_FIELDS,
+    BUILDING_FILTER_FIELDS,
+    BUILDING_NAME_FIELDS,
     BUILDING_UTILS_FUZZY_MATCH_THRESHOLD,
     BUILDING_UTILS_MIN_NAME_LENGTH,
     TARGET_INDEXES,
@@ -54,10 +58,16 @@ from .cache import (
     BUILDING_NAMES_CACHE as _BUILDING_NAMES_CACHE,
 )
 from .cache import (
+    BUILDING_VARIATIONS_REVERSE as _BUILDING_VARIATIONS_REVERSE,
+)
+from .cache import (
     INDEXES_WITH_BUILDINGS as _INDEXES_WITH_BUILDINGS,
 )
 from .cache import (
     METADATA_FIELDS_CACHE as _METADATA_FIELDS_CACHE,
+)
+from .cache import (
+    register_building_variation as _register_building_variation,
 )
 from .normaliser import normalise_building_name
 from .validation import INVALID_BUILDING_NAMES, is_valid_building_name
@@ -173,14 +183,9 @@ class BuildingCacheManager:
         }
 
 
-# Metadata fields to search for building names (in priority order)
-BUILDING_METADATA_FIELDS = [
-    "canonical_building_name",
-    "building_name",
-    "Property names",
-    "UsrFRACondensedPropertyName",
-    "building_aliases",
-]
+# Metadata fields to search for building names (in priority order):
+# the shared name fields plus the alias list ingested alongside them.
+BUILDING_METADATA_FIELDS = list(BUILDING_FILTER_FIELDS)
 
 # Fuzzy match threshold (80% similarity)
 FUZZY_MATCH_THRESHOLD = BUILDING_UTILS_FUZZY_MATCH_THRESHOLD
@@ -311,7 +316,9 @@ def populate_building_cache_from_multiple_indexes(
     _BUILDING_NAMES_CACHE.clear()
     _BUILDING_ALIASES_CACHE.clear()
     _METADATA_FIELDS_CACHE.clear()
+    _BUILDING_VARIATIONS_REVERSE.clear()
     _INDEXES_WITH_BUILDINGS.clear()
+    _resolve_candidate_to_canonical.cache_clear()
 
     results = {}
     total_buildings = 0
@@ -403,8 +410,10 @@ def resolve_building_name_fuzzy(raw_name: Optional[str]) -> Optional[str]:
             return _BUILDING_NAMES_CACHE[norm.lower()]
         return norm
 
-    # 4. As-is fallback
-    return raw_name
+    # 4. Nothing validated: returning the raw text would turn arbitrary query
+    # fragments into building filters (guaranteeing an empty filtered search),
+    # so treat it as "no building".
+    return None
 
 
 def create_building_metadata_filter(building_filter: str) -> Optional[dict[str, Any]]:
@@ -577,7 +586,7 @@ def populate_building_cache_from_index(
 
             # Extract canonical name (priority order)
             canonical = None
-            for field in ["canonical_building_name", "building_name"]:
+            for field in BUILDING_CANONICAL_FIELDS:
                 if metadata.get(field):
                     canonical = metadata[field]
                     break
@@ -600,6 +609,8 @@ def populate_building_cache_from_index(
             # Add canonical to metadata fields
             _METADATA_FIELDS_CACHE[canonical].add(canonical)
             _METADATA_FIELDS_CACHE[canonical].add(normalised)
+            _register_building_variation(canonical, canonical)
+            _register_building_variation(normalise_building_name(canonical), canonical)
 
             # Extract and store ALL variations from metadata fields
             for field in BUILDING_METADATA_FIELDS:
@@ -615,6 +626,10 @@ def populate_building_cache_from_index(
                             value = str(item).strip()
                             _METADATA_FIELDS_CACHE[canonical].add(value)
                             _METADATA_FIELDS_CACHE[canonical].add(value.lower())
+                            _register_building_variation(value, canonical)
+                            _register_building_variation(
+                                normalise_building_name(value), canonical
+                            )
                             new_metadata_fields_count += 1
 
                 # Handle string values
@@ -622,6 +637,10 @@ def populate_building_cache_from_index(
                     value = field_value.strip()
                     _METADATA_FIELDS_CACHE[canonical].add(value)
                     _METADATA_FIELDS_CACHE[canonical].add(value.lower())
+                    _register_building_variation(value, canonical)
+                    _register_building_variation(
+                        normalise_building_name(value), canonical
+                    )
                     new_metadata_fields_count += 1
 
             # Extract building aliases if present
@@ -653,6 +672,7 @@ def populate_building_cache_from_index(
                                 a_clean = a.strip().lower()
                                 if a_clean and a_clean not in _BUILDING_ALIASES_CACHE:
                                     _BUILDING_ALIASES_CACHE[a_clean] = canonical
+                                    _register_building_variation(a_clean, canonical)
                                     new_aliases_count += 1  # count these too
 
                         alias_lower = alias_str.lower()
@@ -668,11 +688,13 @@ def populate_building_cache_from_index(
                             token = token.strip().replace(" ", "").replace(".", "")
                             if token and token not in _BUILDING_ALIASES_CACHE:
                                 _BUILDING_ALIASES_CACHE[token] = canonical
+                                _register_building_variation(token, canonical)
                                 new_aliases_count += 1
 
                         # Also add to metadata fields
                         _METADATA_FIELDS_CACHE[canonical].add(alias_str)
                         _METADATA_FIELDS_CACHE[canonical].add(alias_lower)
+                        _register_building_variation(alias_str, canonical)
 
         num_canonical = len(canonical_names)
 
@@ -705,6 +727,8 @@ def clear_building_cache():
     _BUILDING_NAMES_CACHE.clear()
     _BUILDING_ALIASES_CACHE.clear()
     _METADATA_FIELDS_CACHE.clear()
+    _BUILDING_VARIATIONS_REVERSE.clear()
+    _resolve_candidate_to_canonical.cache_clear()
     BuildingCacheManager.set_populated(False)
     _INDEXES_WITH_BUILDINGS.clear()
     logging.info("Building cache cleared")
@@ -900,7 +924,7 @@ def extract_building_from_query(
     query = query.strip()
     if len(query) > MAX_QUERY_LENGTH:
         query = query[:MAX_QUERY_LENGTH]
-    logging.info(
+    logging.debug(
         "%s EXTRACT: cache_populated = %s, query = '%s'",
         EMOJI_SEARCH,
         BuildingCacheManager.is_populated(),
@@ -998,12 +1022,12 @@ def extract_building_from_query(
 
                 # allow question words ONLY if they are at the beginning
                 if word_lower in QUESTION_WORDS and idx > 0:
-                    logging.info("%s I rejected '%s'", EMOJI_CROSS, word_lower)
+                    logging.debug("%s I rejected '%s'", EMOJI_CROSS, word_lower)
                     break
 
                 # skip leading question words entirely
                 if idx == 0 and word_lower in QUESTION_WORDS:
-                    logging.info("%s  Skipping '%s'", EMOJI_CAUTION, word_lower)
+                    logging.debug("%s  Skipping '%s'", EMOJI_CAUTION, word_lower)
                     continue
 
                 cleaned_words.append(word)
@@ -1256,12 +1280,7 @@ def group_results_by_building(
         building_name = None
 
         # Check metadata fields in priority order
-        for field in [
-            "canonical_building_name",
-            "building_name",
-            "Property names",
-            "UsrFRACondensedPropertyName",
-        ]:
+        for field in BUILDING_NAME_FIELDS:
             value = metadata.get(field) or result.get(field)
             if value:
                 if isinstance(value, list):
@@ -1300,6 +1319,29 @@ def group_results_by_building(
     return grouped
 
 
+@lru_cache(maxsize=4096)
+def _resolve_candidate_to_canonical(candidate: str) -> Optional[str]:
+    """
+    Resolve a metadata candidate value to a canonical building name.
+
+    O(1) reverse-index lookup first (covers every variation/alias collected at
+    cache population); the expensive fuzzy scan only runs for values the cache
+    has never seen, and its outcome is memoised. Cleared whenever the building
+    cache repopulates.
+    """
+    key = candidate.strip().lower()
+    if not key:
+        return None
+
+    canonical = _BUILDING_VARIATIONS_REVERSE.get(key)
+    if canonical is None:
+        canonical = _BUILDING_VARIATIONS_REVERSE.get(normalise_building_name(key))
+    if canonical is not None:
+        return canonical
+
+    return validate_building_name_fuzzy(candidate, log_matches=False)
+
+
 def result_matches_building(result: dict[str, Any], target_building: str) -> bool:
     """
     Check if a search result belongs to the target building using fuzzy + alias logic.
@@ -1330,9 +1372,9 @@ def result_matches_building(result: dict[str, Any], target_building: str) -> boo
         else:
             candidate_values.append(value)
 
-    # Compare each value to the target building using fuzzy validation
+    # Compare each value to the target building (reverse index, then fuzzy)
     for candidate in candidate_values:
-        validated = validate_building_name_fuzzy(str(candidate), log_matches=False)
+        validated = _resolve_candidate_to_canonical(str(candidate))
         if not validated:
             continue
         candidate_norm = normalise_building_name(validated)
@@ -1442,6 +1484,7 @@ def get_building_context_summary(
 def clear_caches():
     """Clear all LRU caches."""
     normalise_building_name.cache_clear()
+    _resolve_candidate_to_canonical.cache_clear()
     clear_building_cache()
     logging.info("Cleared building_utils caches")
 

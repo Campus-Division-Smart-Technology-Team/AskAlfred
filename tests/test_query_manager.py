@@ -99,6 +99,33 @@ class TestQueryManager:
         assert len(stats["query_types"]) > 0
         assert stats["avg_time_ms"] > 0
 
+    def test_cache_entries_do_not_share_mutable_state(self):
+        """Stored and returned cache values are independent deep copies."""
+        self.manager.cache_enabled = True
+        original = QueryResult(
+            query="hello",
+            answer="hi",
+            results=[{"items": [1]}],
+            metadata={"nested": {"value": 1}},
+        )
+
+        self.manager._store_cached_result("cache-key", original)
+        original.results[0]["items"].append(2)
+        original.metadata["nested"]["value"] = 2
+
+        first = self.manager._get_cached_result("cache-key")
+        assert first is not None
+        assert first.results == [{"items": [1]}]
+        assert first.metadata == {"nested": {"value": 1}}
+
+        first.results[0]["items"].append(3)
+        first.metadata["nested"]["value"] = 3
+
+        second = self.manager._get_cached_result("cache-key")
+        assert second is not None
+        assert second.results == [{"items": [1]}]
+        assert second.metadata == {"nested": {"value": 1}}
+
 
 class TestBackwardCompatibility:
     """Test that results match old system format."""

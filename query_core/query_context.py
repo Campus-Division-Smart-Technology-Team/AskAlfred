@@ -34,6 +34,14 @@ def build_access_filter(
     constrained to their tenant (and to documents allowing one of their roles,
     when roles are present), while anonymous/dev sessions keep the current
     unfiltered behaviour until the wider authz rollout is complete.
+
+    WARNING (rollout semantics): an authenticated user WITHOUT roles is only
+    tenant-scoped and therefore sees role-restricted documents that a user
+    WITH non-matching roles cannot — i.e. holding a role can only narrow
+    access. This is a deliberate transitional posture (locked in by
+    tests/test_access_filter_threading.py) so tenants whose tokens carry no
+    app-role claims are not locked out mid-rollout. Once role assignment is
+    universal, roleless authenticated users should fail closed instead.
     """
     if not authenticated:
         return {}

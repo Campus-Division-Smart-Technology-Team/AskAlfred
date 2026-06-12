@@ -8,7 +8,8 @@ from building.utils import (
     group_results_by_building,
     resolve_building_name_fuzzy,
 )
-from config import MIN_SCORE_THRESHOLD, TARGET_INDEXES
+from config import MIN_SCORE_THRESHOLD, TARGET_INDEXES, get_index_config
+from core.pinecone_utils import embed_texts
 from domain.business_terms import BusinessTermMapper
 from search_core.generate_semantic_answer import (
     enhanced_answer_with_source_date,
@@ -31,7 +32,7 @@ def semantic_search(
     access_filter: Optional[dict] = None,
 ) -> tuple[list[dict], str, str, bool]:
 
-    logging.info(
+    logging.debug(
         "[semantic_search] running: q=%s, k=%s, building=%s",
         query,
         top_k,
@@ -51,6 +52,20 @@ def semantic_search(
         first_term = list(term_context.values())[0]
         doc_type_filter = first_term.get("document_type")
 
+    # Embed once per model up front: both stages and every index reuse the
+    # same query vector instead of paying an embedding API call per pass.
+    vectors_by_model: dict[str, list[float]] = {}
+
+    def _vector_for(idx_name: str) -> Optional[list[float]]:
+        model = get_index_config(idx_name)["model"]
+        if model not in vectors_by_model:
+            try:
+                vectors_by_model[model] = embed_texts([enhanced_query], model)[0]
+            except Exception as e:  # pylint: disable=broad-except
+                logging.warning("Failed to embed query for model '%s': %s", model, e)
+                return None
+        return vectors_by_model[model]
+
     # ===== Stage 1 — building-filtered search =====
     results = []
     used_filter = False
@@ -63,6 +78,7 @@ def semantic_search(
                 top_k * 3,
                 building_filter=building,
                 access_filter=access_filter,
+                query_vector=_vector_for(idx),
             )
             results.extend(hits)
 
@@ -79,6 +95,7 @@ def semantic_search(
                 top_k * 3,
                 building_filter=None,
                 access_filter=access_filter,
+                query_vector=_vector_for(idx),
             )
             results.extend(hits)
 

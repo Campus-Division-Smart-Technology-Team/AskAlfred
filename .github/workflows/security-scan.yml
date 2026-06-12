@@ -2,13 +2,13 @@ name: Security Dependency Scanning
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
     paths:
       - 'pyproject.toml'
       - 'poetry.lock'
       - '.github/workflows/security-scan.yml'
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
     paths:
       - 'pyproject.toml'
       - 'poetry.lock'
@@ -24,10 +24,10 @@ jobs:
         python-version: ['3.10', '3.11', '3.12']
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -70,7 +70,7 @@ jobs:
       - name: Upload security reports
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-reports-${{ matrix.python-version }}
           path: |
@@ -79,7 +79,7 @@ jobs:
       
       - name: Comment PR with security results
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -102,10 +102,10 @@ jobs:
   dependency-update-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
           cache: 'pip'
@@ -123,7 +123,7 @@ jobs:
       
       - name: Create issue for outdated packages
         if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.create({

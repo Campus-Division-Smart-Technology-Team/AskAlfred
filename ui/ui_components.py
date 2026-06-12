@@ -5,6 +5,7 @@ UI components and styling for the AskAlfred Streamlit app.
 Enhanced with building cache status display.
 """
 
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -227,16 +228,6 @@ def render_sidebar():
             help="Number of results to return per query",
         )
 
-        if "generate_llm_answer" not in st.session_state:
-            st.session_state.generate_llm_answer = True
-
-        generate_llm_answer = st.checkbox(
-            "Generate AI answer from search results",
-            value=st.session_state.generate_llm_answer,
-            help="If disabled, you'll only see the retrieved passages.",
-        )
-        st.session_state.generate_llm_answer = generate_llm_answer
-
         if ENABLE_SERVICE_STATUS:
             st.markdown("---")
             render_service_status()
@@ -301,8 +292,10 @@ def get_redis_status() -> tuple[str, str]:
         if redis_client.ping():
             return "Operational", "ok"
         return "No response", "warning"
-    except Exception as exc:  # pylint: disable=broad-except
-        return f"Unavailable: {exc}", "error"
+    except Exception:  # pylint: disable=broad-except
+        # Keep connection details (host/port in exception text) out of the UI.
+        logging.warning("Redis status check failed", exc_info=True)
+        return "Unavailable", "error"
 
 
 def render_status_line(label: str, status_text: str, severity: str):

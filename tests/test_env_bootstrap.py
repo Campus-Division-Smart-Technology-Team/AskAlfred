@@ -49,8 +49,9 @@ def _install_fake_path(monkeypatch, *, env_exists: bool):
             return self
 
         @property
-        def parent(self):
-            return self
+        def parents(self):
+            # env_bootstrap resolves the repo root via parents[1] (module is in core/).
+            return [self, self]
 
         def __truediv__(self, other: str):
             return FakeEnvPath(f"{self.path}\\{other}")

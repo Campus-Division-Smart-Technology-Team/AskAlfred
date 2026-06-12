@@ -31,7 +31,8 @@ def load_local_env() -> None:
     if _ENV_BOOTSTRAP_COMPLETE:
         return
 
-    env_path = Path(__file__).resolve().parent / ".env"
+    # This module lives in core/; the .env file sits in the repository root.
+    env_path = Path(__file__).resolve().parents[1] / ".env"
     dotenv_flags: dict[str, object] = {}
 
     if env_path.exists():
